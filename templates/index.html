@@ -1,0 +1,1762 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YT Scheduler</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --white: #ffffff;
+    --off-white: #fafafa;
+    --gray-50: #f8f8f8;
+    --gray-100: #f0f0f0;
+    --gray-200: #e4e4e4;
+    --gray-300: #d0d0d0;
+    --gray-400: #a0a0a0;
+    --gray-500: #707070;
+    --gray-700: #3a3a3a;
+    --gray-900: #111111;
+    --accent: #2563eb;
+    --accent-light: #dbeafe;
+    --accent-hover: #1d4ed8;
+    --green: #16a34a;
+    --green-light: #dcfce7;
+    --red: #dc2626;
+    --red-light: #fee2e2;
+    --yellow: #d97706;
+    --yellow-light: #fef3c7;
+    --radius: 10px;
+    --radius-sm: 6px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+    --shadow-md: 0 4px 6px rgba(0,0,0,0.06), 0 2px 4px rgba(0,0,0,0.05);
+    --shadow-lg: 0 10px 25px rgba(0,0,0,0.1), 0 4px 8px rgba(0,0,0,0.06);
+  }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--off-white);
+    color: var(--gray-900);
+    min-height: 100vh;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  /* ── Header ── */
+  .header {
+    background: var(--white);
+    border-bottom: 1px solid var(--gray-200);
+    padding: 0 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 56px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .header-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--gray-900);
+    letter-spacing: -0.02em;
+  }
+  .header-brand svg { color: var(--accent); }
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .auth-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--gray-300);
+    transition: background 0.2s;
+  }
+  .auth-dot.ok { background: var(--green); }
+  .auth-status-text {
+    font-size: 12px;
+    color: var(--gray-500);
+    font-weight: 400;
+  }
+
+  /* ── Tabs ── */
+  .tabs-wrapper {
+    background: var(--white);
+    border-bottom: 1px solid var(--gray-200);
+    padding: 0 32px;
+  }
+  .tabs {
+    display: flex;
+    gap: 0;
+  }
+  .tab {
+    padding: 14px 20px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--gray-500);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .tab:hover { color: var(--gray-700); }
+  .tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  .tab svg { opacity: 0.7; }
+  .tab.active svg { opacity: 1; }
+
+  /* ── Main Layout ── */
+  .main {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 28px 20px 60px;
+  }
+
+  /* ── Tab Panels ── */
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ── Section ── */
+  .section-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--gray-400);
+    margin-bottom: 12px;
+  }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius);
+    padding: 24px;
+    box-shadow: var(--shadow);
+    margin-bottom: 16px;
+  }
+  .card-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--gray-900);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card-sub {
+    font-size: 12px;
+    color: var(--gray-400);
+    margin-bottom: 20px;
+  }
+
+  /* ── Upload Zone ── */
+  .upload-zone {
+    border: 2px dashed var(--gray-200);
+    border-radius: var(--radius);
+    padding: 40px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: var(--gray-50);
+    position: relative;
+  }
+  .upload-zone:hover, .upload-zone.drag-over {
+    border-color: var(--accent);
+    background: var(--accent-light);
+  }
+  .upload-zone input[type="file"] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+  }
+  .upload-icon {
+    width: 40px; height: 40px;
+    background: var(--gray-100);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 12px;
+    color: var(--gray-400);
+  }
+  .upload-zone:hover .upload-icon,
+  .upload-zone.drag-over .upload-icon {
+    background: var(--accent-light);
+    color: var(--accent);
+  }
+  .upload-zone-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--gray-700);
+    margin-bottom: 4px;
+  }
+  .upload-zone-sub {
+    font-size: 12px;
+    color: var(--gray-400);
+  }
+
+  /* ── Video Preview ── */
+  .video-preview-wrap {
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: #000;
+    margin-bottom: 16px;
+    aspect-ratio: 16/9;
+    display: none;
+  }
+  .video-preview-wrap.show { display: block; }
+  .video-preview-wrap video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  /* ── File Info ── */
+  .file-info {
+    display: none;
+    padding: 12px 14px;
+    background: var(--green-light);
+    border-radius: var(--radius-sm);
+    border: 1px solid #bbf7d0;
+    margin-bottom: 16px;
+    font-size: 12px;
+    color: var(--green);
+    gap: 8px;
+    align-items: center;
+  }
+  .file-info.show { display: flex; }
+  .file-info-name {
+    font-weight: 500;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ── Schedule Form ── */
+  .schedule-form {
+    display: none;
+    gap: 12px;
+    flex-direction: column;
+  }
+  .schedule-form.show { display: flex; }
+  .form-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .input-number {
+    flex: 1;
+    padding: 10px 14px;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius-sm);
+    font-family: 'DM Mono', monospace;
+    font-size: 20px;
+    font-weight: 500;
+    color: var(--gray-900);
+    background: var(--white);
+    outline: none;
+    transition: border-color 0.15s;
+    text-align: center;
+  }
+  .input-number:focus { border-color: var(--accent); }
+  .unit-select {
+    padding: 10px 14px;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius-sm);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    color: var(--gray-700);
+    background: var(--white);
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .unit-select:focus { border-color: var(--accent); }
+
+  /* ── Buttons ── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 10px 18px;
+    border-radius: var(--radius-sm);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    transition: all 0.15s;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-primary {
+    background: var(--accent);
+    color: var(--white);
+  }
+  .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn-secondary {
+    background: var(--gray-100);
+    color: var(--gray-700);
+    border: 1px solid var(--gray-200);
+  }
+  .btn-secondary:hover:not(:disabled) { background: var(--gray-200); }
+  .btn-danger {
+    background: var(--red-light);
+    color: var(--red);
+    border: 1px solid #fecaca;
+  }
+  .btn-danger:hover:not(:disabled) { background: #fecaca; }
+  .btn-full { width: 100%; }
+  .btn-sm { padding: 6px 12px; font-size: 12px; }
+
+  /* ── GitHub Progress ── */
+  .gh-progress {
+    display: none;
+    padding: 16px;
+    background: var(--gray-50);
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius-sm);
+    margin-bottom: 12px;
+  }
+  .gh-progress.show { display: block; }
+  .gh-progress-label {
+    font-size: 12px;
+    color: var(--gray-500);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .gh-progress-bar-wrap {
+    height: 4px;
+    background: var(--gray-200);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .gh-progress-bar {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 0.3s ease;
+    width: 0%;
+  }
+  .gh-progress-bar.indeterminate {
+    animation: indeterminate 1.5s ease-in-out infinite;
+    width: 40%;
+  }
+  @keyframes indeterminate {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+  }
+
+  /* ── Queue List ── */
+  .queue-list { display: flex; flex-direction: column; gap: 10px; }
+  .queue-item {
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+    align-items: start;
+    box-shadow: var(--shadow);
+    transition: box-shadow 0.15s;
+  }
+  .queue-item:hover { box-shadow: var(--shadow-md); }
+  .queue-item.uploading { border-color: var(--accent); background: #fafcff; }
+  .queue-item.done { border-color: #86efac; background: #f0fdf4; }
+  .queue-item.failed { border-color: #fca5a5; background: #fff5f5; }
+  .queue-item.waiting { opacity: 0.75; }
+
+  .qi-body {}
+  .qi-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--gray-900);
+    margin-bottom: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 420px;
+  }
+  .qi-meta {
+    font-size: 11px;
+    color: var(--gray-400);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .qi-filename {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--gray-400);
+    margin-top: 3px;
+  }
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .badge-pending { background: var(--accent-light); color: var(--accent); }
+  .badge-waiting { background: var(--yellow-light); color: var(--yellow); }
+  .badge-uploading { background: #e0f2fe; color: #0369a1; }
+  .badge-done { background: var(--green-light); color: var(--green); }
+  .badge-failed { background: var(--red-light); color: var(--red); }
+
+  .countdown {
+    font-family: 'DM Mono', monospace;
+    font-size: 22px;
+    font-weight: 500;
+    color: var(--gray-900);
+    letter-spacing: -0.02em;
+    margin-top: 6px;
+  }
+  .countdown.waiting-label {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    color: var(--gray-400);
+    font-weight: 400;
+  }
+
+  .qi-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-end;
+  }
+  .qi-link {
+    font-size: 12px;
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .qi-link:hover { text-decoration: underline; }
+
+  .empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--gray-400);
+  }
+  .empty-state svg { margin-bottom: 10px; opacity: 0.4; }
+  .empty-state p { font-size: 13px; }
+
+  /* ── Music List ── */
+  .music-list { display: flex; flex-direction: column; gap: 6px; }
+  .music-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius-sm);
+    background: var(--white);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .music-item:hover { border-color: var(--accent); background: var(--accent-light); }
+  .music-item.selected {
+    border-color: var(--accent);
+    background: var(--accent-light);
+  }
+  .music-item.playing { border-color: var(--green); background: var(--green-light); }
+  .music-icon {
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    background: var(--gray-100);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: var(--gray-400);
+    font-size: 14px;
+  }
+  .music-item.selected .music-icon,
+  .music-item.playing .music-icon { background: var(--accent); color: white; }
+  .music-item.playing .music-icon { background: var(--green); }
+  .music-name { font-size: 13px; font-weight: 500; color: var(--gray-900); flex: 1; }
+  .music-dur {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--gray-400);
+  }
+  .play-btn {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--gray-100);
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--gray-500);
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .play-btn:hover { background: var(--gray-200); color: var(--gray-900); }
+
+  /* ── Image Preview ── */
+  .img-preview-wrap {
+    display: none;
+    border-radius: var(--radius);
+    overflow: hidden;
+    border: 1px solid var(--gray-200);
+    aspect-ratio: 16/9;
+    background: var(--gray-900);
+    margin-bottom: 16px;
+    align-items: center;
+    justify-content: center;
+  }
+  .img-preview-wrap.show { display: flex; }
+  .img-preview-wrap img { max-width: 100%; max-height: 100%; object-fit: contain; }
+
+  /* ── Video Maker Progress ── */
+  .maker-progress {
+    display: none;
+    text-align: center;
+    padding: 32px 20px;
+  }
+  .maker-progress.show { display: block; }
+  .progress-circle {
+    width: 72px; height: 72px;
+    border-radius: 50%;
+    background: conic-gradient(var(--accent) 0%, var(--gray-200) 0%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 16px;
+    position: relative;
+  }
+  .progress-circle::before {
+    content: '';
+    position: absolute;
+    width: 52px; height: 52px;
+    border-radius: 50%;
+    background: var(--white);
+  }
+  .progress-pct {
+    position: relative;
+    z-index: 1;
+    font-family: 'DM Mono', monospace;
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--gray-900);
+  }
+  .progress-label {
+    font-size: 13px;
+    color: var(--gray-500);
+    margin-bottom: 4px;
+  }
+  .progress-detail { font-size: 12px; color: var(--gray-400); }
+
+  /* ── Result Video ── */
+  .result-wrap { display: none; }
+  .result-wrap.show { display: block; }
+
+  /* ── Install / Utility ── */
+  .util-card {
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    box-shadow: var(--shadow);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .util-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--gray-700);
+  }
+  .util-sub { font-size: 12px; color: var(--gray-400); margin-top: 2px; }
+
+  /* ── Install Output ── */
+  .install-output {
+    display: none;
+    background: var(--gray-900);
+    color: #a3e635;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    padding: 14px;
+    border-radius: var(--radius-sm);
+    max-height: 200px;
+    overflow-y: auto;
+    margin-top: 12px;
+    white-space: pre-wrap;
+  }
+  .install-output.show { display: block; }
+
+  /* ── Alerts ── */
+  .alert {
+    padding: 12px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    margin-bottom: 12px;
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+  }
+  .alert-success { background: var(--green-light); color: var(--green); border: 1px solid #86efac; }
+  .alert-error { background: var(--red-light); color: var(--red); border: 1px solid #fca5a5; }
+  .alert-info { background: var(--accent-light); color: var(--accent); border: 1px solid #93c5fd; }
+
+  /* ── Popup Modal ── */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.35);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: var(--white);
+    border-radius: 14px;
+    padding: 28px;
+    max-width: 520px;
+    width: 100%;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: var(--shadow-lg);
+    animation: modal-in 0.2s ease;
+  }
+  @keyframes modal-in {
+    from { transform: scale(0.95); opacity: 0; }
+    to   { transform: scale(1); opacity: 1; }
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  .modal-title { font-size: 16px; font-weight: 600; color: var(--gray-900); }
+  .modal-close {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--gray-100);
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--gray-500);
+    font-size: 16px;
+  }
+  .modal-close:hover { background: var(--gray-200); }
+
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  .stat-box {
+    text-align: center;
+    padding: 14px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--gray-200);
+  }
+  .stat-num {
+    font-family: 'DM Mono', monospace;
+    font-size: 24px;
+    font-weight: 500;
+    color: var(--gray-900);
+    margin-bottom: 2px;
+  }
+  .stat-label { font-size: 11px; color: var(--gray-400); }
+
+  .modal-section { margin-bottom: 18px; }
+  .modal-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--gray-400);
+    margin-bottom: 10px;
+  }
+  .modal-item {
+    padding: 10px 12px;
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius-sm);
+    margin-bottom: 6px;
+    font-size: 12px;
+  }
+  .modal-item-title { font-weight: 500; color: var(--gray-900); margin-bottom: 3px; }
+  .modal-item-sub { color: var(--gray-400); }
+  .modal-item.active-item { border-color: var(--accent); background: var(--accent-light); }
+  .modal-item.failed-item { border-color: #fca5a5; background: var(--red-light); }
+  .modal-item.done-item { border-color: #86efac; background: var(--green-light); }
+
+  .check-verified { color: var(--green); }
+  .check-failed { color: var(--red); }
+
+  /* ── Loading spinner ── */
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid transparent;
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    display: inline-block;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Divider ── */
+  .divider {
+    height: 1px;
+    background: var(--gray-200);
+    margin: 20px 0;
+  }
+
+  /* ── Scroll ── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--gray-300); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--gray-400); }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+  <div class="header-brand">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="23 7 16 12 23 17 23 7"/>
+      <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+    </svg>
+    YT Scheduler
+  </div>
+  <div class="header-actions">
+    <div class="auth-dot" id="authDot"></div>
+    <span class="auth-status-text" id="authText">Checking...</span>
+  </div>
+</header>
+
+<!-- Tabs -->
+<div class="tabs-wrapper">
+  <nav class="tabs">
+    <div class="tab active" data-tab="schedule">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+      </svg>
+      Upload Terjadwal
+    </div>
+    <div class="tab" data-tab="maker">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
+      </svg>
+      Make Video
+    </div>
+  </nav>
+</div>
+
+<!-- Main -->
+<main class="main">
+
+  <!-- ══ TAB: UPLOAD TERJADWAL ══ -->
+  <div class="tab-panel active" id="panel-schedule">
+
+    <!-- Upload Card -->
+    <div class="card">
+      <div class="card-title">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        Upload Video
+      </div>
+      <p class="card-sub">Pilih video dari perangkat kamu</p>
+
+      <div class="upload-zone" id="scheduleZone">
+        <input type="file" id="scheduleFile" accept="video/*">
+        <div class="upload-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+        </div>
+        <p class="upload-zone-title">Tap untuk pilih video</p>
+        <p class="upload-zone-sub">MP4, MOV, AVI, MKV, WebM</p>
+      </div>
+
+      <div class="file-info" id="fileInfo">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+        </svg>
+        <span class="file-info-name" id="fileInfoName"></span>
+        <span id="fileInfoSize"></span>
+      </div>
+
+      <!-- Video Preview -->
+      <div class="video-preview-wrap" id="videoPreviewWrap">
+        <video id="videoPreviewEl" controls></video>
+      </div>
+
+      <!-- GitHub Upload Progress -->
+      <div class="gh-progress" id="ghProgress">
+        <div class="gh-progress-label">
+          <span class="spinner"></span>
+          <span id="ghProgressLabel">Menyimpan ke GitHub...</span>
+        </div>
+        <div class="gh-progress-bar-wrap">
+          <div class="gh-progress-bar indeterminate" id="ghProgressBar"></div>
+        </div>
+      </div>
+
+      <div id="scheduleAlert"></div>
+
+      <!-- Schedule Form -->
+      <div class="schedule-form" id="scheduleForm">
+        <div style="margin-bottom: 4px;">
+          <div style="font-size: 13px; font-weight: 500; color: var(--gray-700); margin-bottom: 4px;">Jadwalkan upload dalam...</div>
+          <div class="form-row">
+            <input type="number" class="input-number" id="timeoutValue" value="1" min="0" step="1" placeholder="0">
+            <select class="unit-select" id="timeoutUnit">
+              <option value="seconds">Detik</option>
+              <option value="minutes">Menit</option>
+              <option value="hours" selected>Jam</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-full" id="saveScheduleBtn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/>
+            <polyline points="17 21 17 13 7 13 7 21"/>
+            <polyline points="7 3 7 8 15 8"/>
+          </svg>
+          Simpan & Jadwalkan
+        </button>
+      </div>
+    </div>
+
+    <!-- Queue -->
+    <div class="divider"></div>
+    <div class="section-label">Antrian Upload</div>
+    <div id="queueList" class="queue-list">
+      <div class="empty-state">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg>
+        <p>Belum ada antrian</p>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ══ TAB: VIDEO MAKER ══ -->
+  <div class="tab-panel" id="panel-maker">
+
+    <!-- Upload Foto -->
+    <div id="makerUploadSection">
+      <div class="card">
+        <div class="card-title">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+            <polyline points="21 15 16 10 5 21"/>
+          </svg>
+          Upload Foto
+        </div>
+        <p class="card-sub">Foto akan dijadikan video berkualitas 1080p</p>
+
+        <div class="upload-zone" id="photoZone">
+          <input type="file" id="photoFile" accept="image/*">
+          <div class="upload-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+              <polyline points="21 15 16 10 5 21"/>
+            </svg>
+          </div>
+          <p class="upload-zone-title">Tap untuk pilih foto</p>
+          <p class="upload-zone-sub">JPG, PNG, WebP, HEIC</p>
+        </div>
+
+        <div class="img-preview-wrap" id="imgPreviewWrap">
+          <img id="imgPreviewEl" src="" alt="preview">
+        </div>
+
+        <div id="photoAlert"></div>
+      </div>
+
+      <!-- Music List -->
+      <div class="card" id="musicCard" style="display:none">
+        <div class="card-title">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 18V5l12-2v13"/>
+            <circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
+          </svg>
+          Pilih Musik
+        </div>
+        <p class="card-sub">Klik untuk memilih, play untuk preview</p>
+
+        <div class="music-list" id="musicList">
+          <div class="empty-state"><p>Memuat musik...</p></div>
+        </div>
+
+        <div id="makeNowWrap" style="display:none; margin-top: 16px;">
+          <button class="btn btn-primary btn-full" id="makeNowBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            Make Now
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Progress -->
+    <div class="card maker-progress" id="makerProgress">
+      <div class="progress-circle" id="progressCircle">
+        <span class="progress-pct" id="progressPct">0%</span>
+      </div>
+      <p class="progress-label" id="progressLabel">Mempersiapkan...</p>
+      <p class="progress-detail" id="progressDetail"></p>
+    </div>
+
+    <!-- Result -->
+    <div class="result-wrap" id="makerResult">
+      <div class="card">
+        <div class="card-title" style="color: var(--green);">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>
+            <polyline points="22 4 12 14.01 9 11.01"/>
+          </svg>
+          Video Selesai
+        </div>
+        <div class="video-preview-wrap show" style="margin-bottom: 16px;">
+          <video id="resultVideo" controls></video>
+        </div>
+        <div class="form-row">
+          <button class="btn btn-primary" style="flex:1" id="saveResultBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Download
+          </button>
+          <button class="btn btn-secondary" style="flex:1" id="makeAgainBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/>
+            </svg>
+            Make Again
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</main>
+
+<!-- Floating Utilities -->
+<div style="position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 50;">
+  <button class="btn btn-secondary btn-sm" id="installBtn">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+      <polyline points="7 10 12 15 17 10"/>
+      <line x1="12" y1="15" x2="12" y2="3"/>
+    </svg>
+    Install Dependencies
+  </button>
+  <button class="btn btn-secondary btn-sm" id="checkQueueBtn">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+    </svg>
+    Check Queue
+  </button>
+</div>
+
+<!-- Install Output -->
+<div style="position:fixed; bottom: 70px; right: 20px; width: 340px; z-index: 50; display: none;" id="installPanel">
+  <div class="card" style="padding: 14px; margin: 0;">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 10px;">
+      <span style="font-size: 13px; font-weight: 600;">Install Dependencies</span>
+      <button onclick="document.getElementById('installPanel').style.display='none'" class="modal-close">×</button>
+    </div>
+    <div class="install-output show" id="installOutput">Klik tombol di bawah untuk mulai...</div>
+    <button class="btn btn-primary btn-full" style="margin-top: 10px;" id="installRunBtn">
+      <span class="spinner" style="display:none;" id="installSpinner"></span>
+      Mulai Install
+    </button>
+  </div>
+</div>
+
+<!-- Queue Check Modal -->
+<div class="modal-overlay" id="queueModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Status Antrian</span>
+      <button class="modal-close" id="queueModalClose">×</button>
+    </div>
+    <div id="queueModalContent">
+      <div style="text-align:center; padding: 30px; color: var(--gray-400);">
+        <span class="spinner"></span>
+        <p style="margin-top: 12px; font-size: 13px;">Mengambil data dari GitHub...</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// STATE
+// ============================================================
+let scheduleState = {
+  filename: null,
+  fileHash: null,
+  githubPath: null,
+  fileSizeMb: 0,
+};
+let makerState = {
+  photoFilename: null,
+  selectedMusic: null,
+  resultFilename: null,
+  taskId: null,
+  audioEl: null,
+  playingMusic: null,
+};
+let queuePollTimer = null;
+
+// ============================================================
+// TABS
+// ============================================================
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById(`panel-${tab.dataset.tab}`).classList.add('active');
+  });
+});
+
+// ============================================================
+// AUTH STATUS
+// ============================================================
+async function checkAuth() {
+  try {
+    const r = await fetch('/api/auth-status');
+    const d = await r.json();
+    document.getElementById('authDot').className = 'auth-dot' + (d.authenticated ? ' ok' : '');
+    document.getElementById('authText').textContent = d.authenticated ? 'YouTube Terhubung' : 'Belum Auth';
+  } catch(e) {
+    document.getElementById('authText').textContent = 'Error';
+  }
+}
+checkAuth();
+
+// ============================================================
+// ALERTS
+// ============================================================
+function showAlert(id, type, msg) {
+  const el = document.getElementById(id);
+  el.innerHTML = `<div class="alert alert-${type}">${msg}</div>`;
+  setTimeout(() => { el.innerHTML = ''; }, 8000);
+}
+
+// ============================================================
+// FORMAT HELPERS
+// ============================================================
+function fmtTime(secs) {
+  if (!secs && secs !== 0) return '--:--:--';
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = Math.floor(secs % 60);
+  if (h > 0) return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+function fmtMb(bytes) {
+  return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+// ============================================================
+// SCHEDULE: FILE UPLOAD
+// ============================================================
+const scheduleZone = document.getElementById('scheduleZone');
+const scheduleFile = document.getElementById('scheduleFile');
+
+scheduleZone.addEventListener('dragover', e => { e.preventDefault(); scheduleZone.classList.add('drag-over'); });
+scheduleZone.addEventListener('dragleave', () => scheduleZone.classList.remove('drag-over'));
+scheduleZone.addEventListener('drop', e => {
+  e.preventDefault();
+  scheduleZone.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) handleScheduleFile(e.dataTransfer.files[0]);
+});
+scheduleFile.addEventListener('change', () => {
+  if (scheduleFile.files[0]) handleScheduleFile(scheduleFile.files[0]);
+});
+
+async function handleScheduleFile(file) {
+  // Reset
+  scheduleState = { filename: null, fileHash: null, githubPath: null, fileSizeMb: 0 };
+  document.getElementById('scheduleForm').classList.remove('show');
+  document.getElementById('fileInfo').classList.remove('show');
+  document.getElementById('videoPreviewWrap').classList.remove('show');
+  document.getElementById('scheduleAlert').innerHTML = '';
+
+  // Show file info
+  document.getElementById('fileInfoName').textContent = file.name;
+  document.getElementById('fileInfoSize').textContent = fmtMb(file.size);
+  document.getElementById('fileInfo').classList.add('show');
+
+  // Show video preview
+  const previewUrl = URL.createObjectURL(file);
+  document.getElementById('videoPreviewEl').src = previewUrl;
+  document.getElementById('videoPreviewWrap').classList.add('show');
+
+  // Upload to server
+  showGhProgress('Mengupload ke server...');
+  const formData = new FormData();
+  formData.append('video', file);
+
+  try {
+    const r = await fetch('/api/upload-scheduled-file', { method: 'POST', body: formData });
+    const d = await r.json();
+
+    if (d.duplicate) {
+      hideGhProgress();
+      showAlert('scheduleAlert', 'info', `⚠️ Video ini sudah pernah diupload. ${d.link ? `<a href="${d.link}" target="_blank" style="color:inherit">Lihat di YouTube →</a>` : ''}`);
+      return;
+    }
+    if (d.error) {
+      hideGhProgress();
+      showAlert('scheduleAlert', 'error', `❌ ${d.error}`);
+      return;
+    }
+
+    scheduleState.filename  = d.filename;
+    scheduleState.fileHash  = d.file_hash;
+    scheduleState.fileSizeMb = d.file_size_mb;
+
+    // Upload ke GitHub
+    updateGhProgress('Mengupload ke GitHub...');
+    const r2 = await fetch('/api/upload-to-github', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: d.filename })
+    });
+    const d2 = await r2.json();
+
+    if (d2.error) {
+      hideGhProgress();
+      showAlert('scheduleAlert', 'error', `❌ Gagal upload ke GitHub: ${d2.error}`);
+      return;
+    }
+
+    scheduleState.githubPath = d2.github_path;
+    hideGhProgress();
+    showAlert('scheduleAlert', 'success', `✅ Video berhasil disimpan ke GitHub! File: <code>${d2.github_path}</code>`);
+    document.getElementById('scheduleForm').classList.add('show');
+
+  } catch(e) {
+    hideGhProgress();
+    showAlert('scheduleAlert', 'error', `❌ Error: ${e.message}`);
+  }
+}
+
+function showGhProgress(label) {
+  document.getElementById('ghProgress').classList.add('show');
+  document.getElementById('ghProgressLabel').textContent = label;
+}
+function updateGhProgress(label) {
+  document.getElementById('ghProgressLabel').textContent = label;
+}
+function hideGhProgress() {
+  document.getElementById('ghProgress').classList.remove('show');
+}
+
+// ============================================================
+// SCHEDULE: SAVE
+// ============================================================
+document.getElementById('saveScheduleBtn').addEventListener('click', async () => {
+  if (!scheduleState.filename || !scheduleState.githubPath) {
+    showAlert('scheduleAlert', 'error', 'Upload video dulu sebelum menjadwalkan.');
+    return;
+  }
+
+  const tv = parseFloat(document.getElementById('timeoutValue').value) || 0;
+  const tu = document.getElementById('timeoutUnit').value;
+
+  const btn = document.getElementById('saveScheduleBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Menyimpan...';
+
+  try {
+    const r = await fetch('/api/schedule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filename:    scheduleState.filename,
+        file_hash:   scheduleState.fileHash,
+        github_path: scheduleState.githubPath,
+        timeout_value: tv,
+        timeout_unit:  tu,
+        source: 'upload',
+      })
+    });
+    const d = await r.json();
+
+    if (d.error) {
+      showAlert('scheduleAlert', 'error', `❌ ${d.error}`);
+    } else {
+      showAlert('scheduleAlert', 'success', `✅ Dijadwalkan! Status: ${d.queue_status === 'waiting' ? 'Menunggu giliran' : 'Countdown dimulai'}`);
+      // Reset form
+      document.getElementById('scheduleForm').classList.remove('show');
+      document.getElementById('videoPreviewWrap').classList.remove('show');
+      document.getElementById('fileInfo').classList.remove('show');
+      scheduleState = { filename: null, fileHash: null, githubPath: null, fileSizeMb: 0 };
+      scheduleFile.value = '';
+      loadQueue();
+    }
+  } catch(e) {
+    showAlert('scheduleAlert', 'error', `❌ ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Simpan & Jadwalkan';
+  }
+});
+
+// ============================================================
+// QUEUE DISPLAY
+// ============================================================
+let queueData = [];
+
+async function loadQueue() {
+  try {
+    const r = await fetch('/api/queue');
+    queueData = await r.json();
+    renderQueue();
+  } catch(e) {}
+}
+
+function renderQueue() {
+  const el = document.getElementById('queueList');
+  const active = queueData.filter(q => !['done','failed'].includes(q.status));
+  const done   = queueData.filter(q => q.status === 'done').slice(-3).reverse();
+  const failed = queueData.filter(q => q.status === 'failed').slice(-3).reverse();
+  const all = [...active, ...done, ...failed];
+
+  if (all.length === 0) {
+    el.innerHTML = `<div class="empty-state">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg>
+      <p>Belum ada antrian</p>
+    </div>`;
+    return;
+  }
+
+  el.innerHTML = all.map(q => queueItemHTML(q)).join('');
+
+  // Attach delete handlers
+  el.querySelectorAll('[data-delete]').forEach(btn => {
+    btn.addEventListener('click', () => deleteQueueItem(btn.dataset.delete));
+  });
+  el.querySelectorAll('[data-check]').forEach(btn => {
+    btn.addEventListener('click', () => checkQueueItem(btn.dataset.check, btn));
+  });
+}
+
+function queueItemHTML(q) {
+  const statusBadge = {
+    pending:   '<span class="status-badge badge-pending">⏱ Countdown</span>',
+    waiting:   '<span class="status-badge badge-waiting">⏳ Menunggu</span>',
+    uploading: '<span class="status-badge badge-uploading">↑ Uploading</span>',
+    done:      '<span class="status-badge badge-done">✓ Selesai</span>',
+    failed:    '<span class="status-badge badge-failed">✗ Gagal</span>',
+  }[q.status] || '';
+
+  let countdown = '';
+  if (q.status === 'pending' && q.remaining_seconds != null) {
+    countdown = `<div class="countdown" id="cd-${q.id}">${fmtTime(q.remaining_seconds)}</div>`;
+  } else if (q.status === 'waiting') {
+    countdown = `<div class="countdown waiting-label">Menunggu antrian sebelumnya</div>`;
+  } else if (q.status === 'uploading') {
+    countdown = `<div class="countdown" style="font-size:14px; color: var(--accent);">Sedang diupload ke YouTube...</div>`;
+  } else if (q.status === 'done' && q.link) {
+    countdown = `<a href="${q.link}" target="_blank" class="qi-link">Lihat di YouTube →</a>`;
+  } else if (q.status === 'failed' && q.error) {
+    countdown = `<div style="font-size:11px; color: var(--red); margin-top: 4px;">${q.error.substring(0,80)}</div>`;
+  }
+
+  const actions = q.status !== 'done' && q.status !== 'uploading' ? `
+    <div class="qi-actions">
+      ${statusBadge}
+      <div style="display:flex; gap:4px; margin-top: 4px;">
+        ${['pending','waiting'].includes(q.status) ? `<button class="btn btn-sm btn-secondary" data-check="${q.id}" title="Cek status GitHub">Cek</button>` : ''}
+        ${q.status !== 'uploading' ? `<button class="btn btn-sm btn-danger" data-delete="${q.id}" title="Hapus antrian">Hapus</button>` : ''}
+      </div>
+    </div>` : `<div class="qi-actions">${statusBadge}</div>`;
+
+  return `
+    <div class="queue-item ${q.status}" id="qi-${q.id}">
+      <div class="qi-body">
+        <div class="qi-title">${q.title || q.filename || 'Video'}</div>
+        <div class="qi-meta">
+          <span>Ditambah: ${q.added_at || '-'}</span>
+          ${q.timeout_value ? `<span>• Timer: ${q.timeout_value} ${q.timeout_unit}</span>` : ''}
+        </div>
+        <div class="qi-filename">${q.filename || ''}</div>
+        ${countdown}
+      </div>
+      ${actions}
+    </div>`;
+}
+
+async function deleteQueueItem(id) {
+  if (!confirm('Hapus antrian ini?')) return;
+  try {
+    const r = await fetch(`/api/queue/${id}`, { method: 'DELETE' });
+    const d = await r.json();
+    if (d.error) alert(d.error);
+    else loadQueue();
+  } catch(e) { alert(e.message); }
+}
+
+async function checkQueueItem(id, btn) {
+  const orig = btn.textContent;
+  btn.textContent = '...';
+  btn.disabled = true;
+  try {
+    const r = await fetch(`/api/queue/${id}/check`);
+    const d = await r.json();
+    if (d.error) {
+      alert(`Error: ${d.error}`);
+    } else {
+      const verified = d.github_verified;
+      alert(
+        `📋 Cek Antrian\n\n` +
+        `Nama File: ${d.filename}\n` +
+        `Path GitHub: ${d.github_path || '-'}\n` +
+        `GitHub: ${verified ? '✅ Ada' : '❌ Tidak ada'}\n` +
+        `${d.github_reason ? `Detail: ${d.github_reason}` : ''}\n` +
+        `Status: ${d.status}`
+      );
+    }
+  } catch(e) { alert(e.message); }
+  finally {
+    btn.textContent = orig;
+    btn.disabled = false;
+  }
+}
+
+// Countdown ticker
+function tickCountdown() {
+  queueData.forEach(q => {
+    if (q.status === 'pending' && q.remaining_seconds != null) {
+      q.remaining_seconds = Math.max(0, q.remaining_seconds - 1);
+      const el = document.getElementById(`cd-${q.id}`);
+      if (el) el.textContent = fmtTime(q.remaining_seconds);
+    }
+  });
+}
+
+// Poll queue every 5s, tick every 1s
+setInterval(tickCountdown, 1000);
+setInterval(loadQueue, 5000);
+loadQueue();
+
+// ============================================================
+// VIDEO MAKER
+// ============================================================
+const photoZone = document.getElementById('photoZone');
+const photoFile = document.getElementById('photoFile');
+
+photoZone.addEventListener('dragover', e => { e.preventDefault(); photoZone.classList.add('drag-over'); });
+photoZone.addEventListener('dragleave', () => photoZone.classList.remove('drag-over'));
+photoZone.addEventListener('drop', e => {
+  e.preventDefault();
+  photoZone.classList.remove('drag-over');
+  if (e.dataTransfer.files[0]) handlePhotoUpload(e.dataTransfer.files[0]);
+});
+photoFile.addEventListener('change', () => {
+  if (photoFile.files[0]) handlePhotoUpload(photoFile.files[0]);
+});
+
+async function handlePhotoUpload(file) {
+  document.getElementById('photoAlert').innerHTML = '';
+  document.getElementById('imgPreviewWrap').classList.remove('show');
+  makerState.photoFilename = null;
+
+  // Preview
+  const previewUrl = URL.createObjectURL(file);
+  document.getElementById('imgPreviewEl').src = previewUrl;
+  document.getElementById('imgPreviewWrap').classList.add('show');
+
+  const formData = new FormData();
+  formData.append('photo', file);
+
+  try {
+    const r = await fetch('/api/upload-photo', { method: 'POST', body: formData });
+    const d = await r.json();
+    if (d.error) {
+      document.getElementById('photoAlert').innerHTML = `<div class="alert alert-error">❌ ${d.error}</div>`;
+      return;
+    }
+    makerState.photoFilename = d.filename;
+    document.getElementById('musicCard').style.display = 'block';
+    loadMusicList();
+  } catch(e) {
+    document.getElementById('photoAlert').innerHTML = `<div class="alert alert-error">❌ ${e.message}</div>`;
+  }
+}
+
+async function loadMusicList() {
+  const listEl = document.getElementById('musicList');
+  listEl.innerHTML = '<div class="empty-state"><p>Memuat...</p></div>';
+  try {
+    const r = await fetch('/api/music-list');
+    const musics = await r.json();
+    if (!musics.length) {
+      listEl.innerHTML = '<div class="empty-state"><p>Tidak ada musik di folder /music</p></div>';
+      return;
+    }
+    listEl.innerHTML = musics.map(m => `
+      <div class="music-item" id="mi-${m.filename}" data-filename="${m.filename}">
+        <div class="music-icon" id="mi-icon-${m.filename}">♪</div>
+        <div class="music-name">${m.name}</div>
+        <span class="music-dur">${m.duration_str}</span>
+        <button class="play-btn" id="mi-play-${m.filename}" data-filename="${m.filename}" title="Preview">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        </button>
+      </div>
+    `).join('');
+
+    listEl.querySelectorAll('.music-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('.play-btn')) return;
+        selectMusic(item.dataset.filename);
+      });
+    });
+
+    listEl.querySelectorAll('.play-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        togglePlay(btn.dataset.filename);
+      });
+    });
+  } catch(e) {
+    listEl.innerHTML = `<div class="empty-state"><p>Error: ${e.message}</p></div>`;
+  }
+}
+
+function selectMusic(filename) {
+  document.querySelectorAll('.music-item').forEach(el => el.classList.remove('selected'));
+  const item = document.getElementById(`mi-${filename}`);
+  if (item) item.classList.add('selected');
+  makerState.selectedMusic = filename;
+  document.getElementById('makeNowWrap').style.display = 'block';
+}
+
+function togglePlay(filename) {
+  if (makerState.audioEl) {
+    makerState.audioEl.pause();
+    makerState.audioEl = null;
+    if (makerState.playingMusic) {
+      const prevItem = document.getElementById(`mi-${makerState.playingMusic}`);
+      if (prevItem) { prevItem.classList.remove('playing'); }
+      const prevIcon = document.getElementById(`mi-icon-${makerState.playingMusic}`);
+      if (prevIcon) prevIcon.textContent = '♪';
+    }
+    if (makerState.playingMusic === filename) {
+      makerState.playingMusic = null;
+      return;
+    }
+  }
+
+  const audio = new Audio(`/music/${filename}`);
+  makerState.audioEl = audio;
+  makerState.playingMusic = filename;
+  audio.play();
+
+  const item = document.getElementById(`mi-${filename}`);
+  if (item) item.classList.add('playing');
+  const icon = document.getElementById(`mi-icon-${filename}`);
+  if (icon) icon.textContent = '▶';
+
+  audio.addEventListener('ended', () => {
+    if (item) item.classList.remove('playing');
+    if (icon) icon.textContent = '♪';
+    makerState.audioEl = null;
+    makerState.playingMusic = null;
+  });
+}
+
+document.getElementById('makeNowBtn').addEventListener('click', async () => {
+  if (!makerState.photoFilename || !makerState.selectedMusic) return;
+
+  // Stop audio
+  if (makerState.audioEl) { makerState.audioEl.pause(); makerState.audioEl = null; }
+
+  // Hide upload section, show progress
+  document.getElementById('makerUploadSection').style.display = 'none';
+  document.getElementById('makerProgress').classList.add('show');
+  document.getElementById('makerResult').classList.remove('show');
+
+  try {
+    const r = await fetch('/api/create-video', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        photo_filename: makerState.photoFilename,
+        music_filename: makerState.selectedMusic,
+      })
+    });
+    const d = await r.json();
+    if (d.error) {
+      document.getElementById('makerProgress').classList.remove('show');
+      document.getElementById('makerUploadSection').style.display = 'block';
+      alert(`❌ ${d.error}`);
+      return;
+    }
+    makerState.taskId = d.task_id;
+    pollMakerProgress();
+  } catch(e) {
+    document.getElementById('makerProgress').classList.remove('show');
+    document.getElementById('makerUploadSection').style.display = 'block';
+    alert(`❌ ${e.message}`);
+  }
+});
+
+async function pollMakerProgress() {
+  if (!makerState.taskId) return;
+  try {
+    const r = await fetch(`/api/create-progress/${makerState.taskId}`);
+    const d = await r.json();
+
+    const pct = d.progress || 0;
+    document.getElementById('progressPct').textContent = pct + '%';
+    document.getElementById('progressCircle').style.background =
+      `conic-gradient(var(--accent) ${pct * 3.6}deg, var(--gray-200) 0deg)`;
+
+    if (d.status === 'running') {
+      document.getElementById('progressLabel').textContent = 'Membuat video 1080p...';
+      if (d.duration) {
+        document.getElementById('progressDetail').textContent = `Durasi: ${d.duration}s · Resolusi: ${d.resolution || '1920x1080'}`;
+      }
+    } else if (d.status === 'pending') {
+      document.getElementById('progressLabel').textContent = 'Mempersiapkan...';
+    }
+
+    if (d.status === 'done') {
+      makerState.resultFilename = d.output_filename;
+      document.getElementById('makerProgress').classList.remove('show');
+      document.getElementById('makerResult').classList.add('show');
+      document.getElementById('resultVideo').src = `/api/video-preview/${d.output_filename}`;
+    } else if (d.status === 'failed') {
+      document.getElementById('makerProgress').classList.remove('show');
+      document.getElementById('makerUploadSection').style.display = 'block';
+      alert(`❌ Gagal membuat video: ${d.error}`);
+    } else {
+      setTimeout(pollMakerProgress, 800);
+    }
+  } catch(e) {
+    setTimeout(pollMakerProgress, 2000);
+  }
+}
+
+document.getElementById('saveResultBtn').addEventListener('click', () => {
+  if (!makerState.resultFilename) return;
+  const a = document.createElement('a');
+  a.href = `/api/video-preview/${makerState.resultFilename}`;
+  a.download = makerState.resultFilename;
+  a.click();
+});
+
+document.getElementById('makeAgainBtn').addEventListener('click', () => {
+  if (makerState.resultFilename) {
+    fetch('/api/delete-made-video', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filename: makerState.resultFilename,
+        photo_filename: makerState.photoFilename,
+      })
+    }).catch(() => {});
+  }
+  // Reset
+  makerState = { photoFilename: null, selectedMusic: null, resultFilename: null, taskId: null, audioEl: null, playingMusic: null };
+  document.getElementById('makerResult').classList.remove('show');
+  document.getElementById('makerProgress').classList.remove('show');
+  document.getElementById('makerUploadSection').style.display = 'block';
+  document.getElementById('imgPreviewWrap').classList.remove('show');
+  document.getElementById('musicCard').style.display = 'none';
+  document.getElementById('makeNowWrap').style.display = 'none';
+  document.getElementById('photoAlert').innerHTML = '';
+  photoFile.value = '';
+});
+
+// ============================================================
+// INSTALL DEPENDENCIES
+// ============================================================
+document.getElementById('installBtn').addEventListener('click', () => {
+  const panel = document.getElementById('installPanel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+});
+
+document.getElementById('installRunBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('installRunBtn');
+  const spinner = document.getElementById('installSpinner');
+  const output = document.getElementById('installOutput');
+
+  btn.disabled = true;
+  spinner.style.display = 'inline-block';
+  output.textContent = 'Menginstall dependencies...\n';
+
+  try {
+    const r = await fetch('/api/install-deps', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const text = decoder.decode(value);
+      text.split('\n').forEach(line => {
+        if (!line.trim()) return;
+        try {
+          const d = JSON.parse(line);
+          if (d.status === 'installing') output.textContent += `📦 Installing ${d.package}...\n`;
+          else if (d.status === 'done_one') output.textContent += `  ${d.result.success ? '✅' : '❌'} ${d.result.package}\n`;
+          else if (d.status === 'complete') {
+            output.textContent += `\n✅ Selesai! ${d.success_count} sukses, ${d.fail_count} gagal\nffmpeg: ${d.ffmpeg_path}\n`;
+          }
+          output.scrollTop = output.scrollHeight;
+        } catch(e) {}
+      });
+    }
+  } catch(e) {
+    output.textContent += `\n❌ Error: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+    spinner.style.display = 'none';
+  }
+});
+
+// ============================================================
+// CHECK QUEUE MODAL
+// ============================================================
+document.getElementById('checkQueueBtn').addEventListener('click', async () => {
+  document.getElementById('queueModal').classList.add('show');
+  document.getElementById('queueModalContent').innerHTML = `
+    <div style="text-align:center; padding: 30px; color: var(--gray-400);">
+      <span class="spinner"></span>
+      <p style="margin-top: 12px; font-size: 13px;">Mengambil data dari GitHub...</p>
+    </div>`;
+
+  try {
+    const r = await fetch('/api/check-queue-summary');
+    const d = await r.json();
+
+    let html = `
+      <div class="stat-grid">
+        <div class="stat-box">
+          <div class="stat-num">${d.active_count}</div>
+          <div class="stat-label">Aktif</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-num">${d.done_count}</div>
+          <div class="stat-label">Selesai</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-num">${d.failed_count}</div>
+          <div class="stat-label">Gagal</div>
+        </div>
+      </div>
+      <p style="font-size:11px; color: var(--gray-400); margin-bottom: 16px; text-align: right;">Diperiksa: ${d.checked_at} · Repo: ${d.github_repo}</p>
+    `;
+
+    if (d.active.length > 0) {
+      html += `<div class="modal-section">
+        <div class="modal-section-title">Antrian Aktif (${d.active.length})</div>`;
+      d.active.forEach(q => {
+        const ghStatus = q.github_verified === true ? '<span class="check-verified">✓ Ada di GitHub</span>' : q.github_verified === false ? '<span class="check-failed">✗ Tidak ada di GitHub</span>' : '–';
+        const rem = q.remaining_seconds != null ? fmtTime(q.remaining_seconds) : 'Menunggu';
+        html += `<div class="modal-item active-item">
+          <div class="modal-item-title">${q.title || 'Video'}</div>
+          <div class="modal-item-sub">Status: ${q.status} · Countdown: ${rem}<br>GitHub: ${ghStatus}</div>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+
+    if (d.failed.length > 0) {
+      html += `<div class="modal-section">
+        <div class="modal-section-title">Antrian Gagal (${d.failed.length})</div>`;
+      d.failed.forEach(q => {
+        html += `<div class="modal-item failed-item">
+          <div class="modal-item-title">${q.title || 'Video'}</div>
+          <div class="modal-item-sub">Error: ${q.error}</div>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+
+    if (d.done_recent.length > 0) {
+      html += `<div class="modal-section">
+        <div class="modal-section-title">Berhasil Terupload (Terbaru)</div>`;
+      d.done_recent.forEach(q => {
+        html += `<div class="modal-item done-item">
+          <div class="modal-item-title">${q.title || 'Video'}</div>
+          <div class="modal-item-sub">
+            ${q.link ? `<a href="${q.link}" target="_blank" class="qi-link">Lihat di YouTube →</a>` : ''}
+            · ${q.uploaded_at || ''}
+          </div>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+
+    if (d.active.length === 0 && d.failed.length === 0 && d.done_recent.length === 0) {
+      html += `<div class="empty-state"><p>Tidak ada data antrian</p></div>`;
+    }
+
+    html += `<p style="font-size:11px; color: var(--gray-400); margin-top: 8px;">Total riwayat upload: ${d.riwayat_count} video</p>`;
+
+    document.getElementById('queueModalContent').innerHTML = html;
+  } catch(e) {
+    document.getElementById('queueModalContent').innerHTML = `<div class="alert alert-error">❌ Error: ${e.message}</div>`;
+  }
+});
+
+document.getElementById('queueModalClose').addEventListener('click', () => {
+  document.getElementById('queueModal').classList.remove('show');
+});
+document.getElementById('queueModal').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('queueModal')) {
+    document.getElementById('queueModal').classList.remove('show');
+  }
+});
+</script>
+</body>
+</html>
