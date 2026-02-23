@@ -324,6 +324,12 @@
     border: 1px solid #fecaca;
   }
   .btn-danger:hover:not(:disabled) { background: #fecaca; }
+  .btn-accent {
+    background: var(--accent-light);
+    color: var(--accent);
+    border: 1px solid #bfdbfe;
+  }
+  .btn-accent:hover:not(:disabled) { background: #bfdbfe; }
   .btn-full { width: 100%; }
   .btn-sm { padding: 6px 12px; font-size: 12px; }
 
@@ -1296,6 +1302,9 @@ function renderQueue() {
   el.querySelectorAll('[data-check]').forEach(btn => {
     btn.addEventListener('click', () => checkQueueItem(btn.dataset.check, btn));
   });
+  el.querySelectorAll('[data-retry]').forEach(btn => {
+    btn.addEventListener('click', () => retryQueueItem(btn.dataset.retry, btn));
+  });
 }
 
 function queueItemHTML(q) {
@@ -1325,6 +1334,7 @@ function queueItemHTML(q) {
       ${statusBadge}
       <div style="display:flex; gap:4px; margin-top: 4px;">
         ${['pending','waiting'].includes(q.status) ? `<button class="btn btn-sm btn-secondary" data-check="${q.id}" title="Cek status GitHub">Cek</button>` : ''}
+        ${q.status === 'failed' ? `<button class="btn btn-sm btn-accent" data-retry="${q.id}" title="Masukkan kembali ke antrian">🔄 Retry</button>` : ''}
         ${q.status !== 'uploading' ? `<button class="btn btn-sm btn-danger" data-delete="${q.id}" title="Hapus antrian">Hapus</button>` : ''}
       </div>
     </div>` : `<div class="qi-actions">${statusBadge}</div>`;
@@ -1352,6 +1362,27 @@ async function deleteQueueItem(id) {
     if (d.error) alert(d.error);
     else loadQueue();
   } catch(e) { alert(e.message); }
+}
+
+async function retryQueueItem(id, btn) {
+  const orig = btn.textContent;
+  btn.textContent = '⏳';
+  btn.disabled = true;
+  try {
+    const r = await fetch(`/api/queue/${id}/retry`, { method: 'POST' });
+    const d = await r.json();
+    if (d.error) {
+      alert(`Gagal retry: ${d.error}`);
+      btn.textContent = orig;
+      btn.disabled = false;
+    } else {
+      loadQueue();
+    }
+  } catch(e) {
+    alert(e.message);
+    btn.textContent = orig;
+    btn.disabled = false;
+  }
 }
 
 async function checkQueueItem(id, btn) {
