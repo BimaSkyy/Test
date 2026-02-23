@@ -1136,6 +1136,39 @@ def delete_queue_item(item_id):
         cleanup_temp(found.get("filename", ""))
     return jsonify({"status": "ok"})
 
+@app.route('/api/queue/<item_id>/retry', methods=['POST'])
+def retry_queue_item(item_id):
+    with queue_lock:
+        queue = load_queue()
+        found = next((q for q in queue if q.get("id") == item_id), None)
+        if not found:
+            return jsonify({"error": "Not found"}), 404
+        if found.get("status") != "failed":
+            return jsonify({"error": "Hanya item yang gagal yang bisa di-retry"}), 400
+
+        # Reset status dan generate ID baru supaya tidak konflik
+        now_ts = time.time()
+        has_busy = any(q.get("status") in ("pending", "uploading", "waiting") for q in queue if q.get("id") != item_id)
+
+        if has_busy:
+            found["status"] = "waiting"
+            found["upload_at_ts"] = None
+            found["upload_at"] = "(menunggu giliran)"
+            found["remaining_seconds"] = None
+        else:
+            ts = float(found.get("timeout_seconds", 0))
+            found["status"] = "pending"
+            found["upload_at_ts"] = now_ts + ts
+            found["upload_at"] = datetime.fromtimestamp(now_ts + ts).strftime("%Y-%m-%d %H:%M:%S")
+            found["remaining_seconds"] = ts
+
+        found.pop("error", None)
+        found["retried_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+
+        save_queue(queue, force_gh=True)
+
+    return jsonify({"status": "ok", "queue_status": found["status"]})
+
 @app.route('/api/queue/<item_id>/check', methods=['GET'])
 def check_queue_item(item_id):
     queue = load_queue()
