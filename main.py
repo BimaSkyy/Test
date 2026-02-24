@@ -435,32 +435,102 @@ def check_duplicate(file_hash: str):
             return True, None, f"Sudah ada di antrian: {item.get('title','')}"
     return False, None, ""
 
-def load_credentials():
-    if not GOOGLE_AVAILABLE: return None
+def _push_token_to_store(creds):
+    """Kirim token terbaru ke Vercel token store."""
+    if not REQUESTS_AVAILABLE: return
+    store_url    = os.environ.get("TOKEN_STORE_URL", "").rstrip("/")
+    store_secret = os.environ.get("TOKEN_STORE_SECRET", "")
+    if not store_url or not store_secret: return
     try:
-        # Prioritas 1: baca dari environment variable (untuk Koyeb/cloud)
+        import requests as r
+        token_dict = json.loads(creds.to_json())
+        resp = r.post(
+            f"{store_url}/api/save-token",
+            headers={"X-Store-Secret": store_secret},
+            json={"token": token_dict},
+            timeout=10
+        )
+        if resp.status_code == 200:
+            print("[AUTH] Token berhasil disimpan ke Vercel store")
+        else:
+            print(f"[AUTH] Gagal kirim token ke store: {resp.status_code}")
+    except Exception as e:
+        print(f"[AUTH] Push token error: {e}")
+
+def _pull_token_from_store() -> dict | None:
+    """Ambil token dari Vercel token store."""
+    if not REQUESTS_AVAILABLE: return None
+    store_url    = os.environ.get("TOKEN_STORE_URL", "").rstrip("/")
+    store_secret = os.environ.get("TOKEN_STORE_SECRET", "")
+    if not store_url or not store_secret: return None
+    try:
+        import requests as r
+        resp = r.get(
+            f"{store_url}/api/get-token",
+            headers={"X-Store-Secret": store_secret},
+            timeout=10
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("ok") and data.get("token"):
+                return data["token"]
+        return None
+    except Exception as e:
+        print(f"[AUTH] Pull token error: {e}")
+        return None
+
+def load_credentials():
+    """
+    Ambil credentials YouTube.
+    Logic refresh ada di sini (Koyeb). Vercel hanya tempat simpan.
+    """
+    if not GOOGLE_AVAILABLE: return None
+
+    # ── Coba dari Vercel token store ──────────────────────────
+    token_data = _pull_token_from_store()
+
+    # ── Fallback: env var (legacy) ────────────────────────────
+    if not token_data:
         token_json_str = os.environ.get("YOUTUBE_TOKEN_JSON", "")
         if token_json_str:
-            token_data = json.loads(token_json_str)
-            creds = Credentials.from_authorized_user_info(token_data, SCOPES)
-            if creds and creds.valid: return creds
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-                print("[AUTH] Token refreshed dari env var")
-                return creds
+            try: token_data = json.loads(token_json_str)
+            except: pass
 
-        # Prioritas 2: baca dari file lokal (untuk development)
+    # ── Fallback: file lokal (development) ───────────────────
+    if not token_data:
         token_path = os.path.join(BASE_DIR, "token.json")
         if os.path.exists(token_path):
-            creds = Credentials.from_authorized_user_file(token_path, SCOPES)
-            if creds and creds.valid: return creds
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-                with open(token_path, "w") as f:
-                    f.write(creds.to_json())
-                return creds
+            try:
+                with open(token_path) as f:
+                    token_data = json.load(f)
+            except: pass
+
+    if not token_data:
+        print("[AUTH] Tidak ada token. Login OAuth dulu di halaman /auth.")
+        return None
+
+    try:
+        creds = Credentials.from_authorized_user_info(token_data, SCOPES)
     except Exception as e:
-        print(f"[AUTH] error: {e}")
+        print(f"[AUTH] Token tidak valid: {e}")
+        return None
+
+    # Token masih valid
+    if creds.valid:
+        return creds
+
+    # Token expired — refresh otomatis
+    if creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            print("[AUTH] Token auto-refresh berhasil")
+            _push_token_to_store(creds)  # simpan token baru ke Vercel
+            return creds
+        except Exception as e:
+            print(f"[AUTH] Auto-refresh gagal: {e}")
+            return None
+
+    print("[AUTH] Token expired & tidak ada refresh_token. Login OAuth ulang.")
     return None
 
 # ============================================================
@@ -925,6 +995,179 @@ def queue_worker():
         except Exception as e:
             print(f"[QUEUE WORKER] Error: {e}")
         time.sleep(1)
+
+# ============================================================
+# OAUTH ROUTES — login & kelola token YouTube
+# ============================================================
+
+try:
+    from google_auth_oauthlib.flow import Flow as OAuthFlow
+    OAUTHLIB_OK = True
+except ImportError:
+    OAUTHLIB_OK = False
+
+_oauth_state_store = {}  # simpan state sementara di RAM
+
+def _get_oauth_redirect_uri():
+    base = os.environ.get("KOYEB_PUBLIC_DOMAIN", "")
+    if not base:
+        base = request.host_url.rstrip("/")
+    elif not base.startswith("http"):
+        base = f"https://{base}"
+    return f"{base}/auth/callback"
+
+@app.route('/auth')
+def auth_page():
+    """Halaman status token & tombol login OAuth."""
+    creds = load_credentials()
+    token_valid = creds is not None and creds.valid
+
+    store_url     = os.environ.get("TOKEN_STORE_URL", "")
+    client_id     = os.environ.get("GOOGLE_CLIENT_ID", "")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+
+    if token_valid:
+        status_color = "#4ade80"
+        status_text  = "✅ Token valid & aktif — auto-refresh aktif"
+    else:
+        status_color = "#f87171"
+        status_text  = "❌ Belum ada token / expired — klik Login di bawah"
+
+    google_configured = bool(client_id and client_secret)
+    store_configured  = bool(store_url and os.environ.get("TOKEN_STORE_SECRET"))
+
+    refresh_btn = '<a href="/auth/refresh" style="display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border-radius:8px;font-size:.88rem;font-weight:600;text-decoration:none;background:#2a2a2a;color:#ccc;border:1px solid #3a3a3a;margin-top:14px">🔄 Force Refresh</a>' if token_valid else ''
+
+    return f"""<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>YouTube Auth — Koyeb</title>
+<style>
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{font-family:system-ui,sans-serif;background:#0f0f0f;color:#e0e0e0;
+       min-height:100vh;display:flex;align-items:center;justify-content:center}}
+  .wrap{{max-width:500px;width:90%;padding:20px 0}}
+  h1{{font-size:1.3rem;margin-bottom:4px}}
+  .sub{{color:#666;font-size:.82rem;margin-bottom:28px}}
+  .card{{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:12px;padding:22px;margin-bottom:16px}}
+  .card h2{{font-size:.85rem;color:#666;margin-bottom:14px;text-transform:uppercase;letter-spacing:.05em}}
+  .badge{{display:flex;align-items:center;gap:10px;padding:12px 16px;border-radius:8px;
+          font-weight:600;font-size:.9rem;color:{status_color};
+          background:{status_color}18;border:1px solid {status_color}44;margin-bottom:14px}}
+  .row{{display:flex;align-items:center;justify-content:space-between;
+        font-size:.82rem;padding:7px 0;border-bottom:1px solid #222}}
+  .row:last-child{{border:none}}
+  .ok{{color:#4ade80}}.no{{color:#f87171}}
+  .val{{color:#888;font-size:.78rem;max-width:60%;text-align:right;word-break:break-all}}
+  .btn{{display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border-radius:8px;
+        font-size:.88rem;font-weight:600;text-decoration:none;background:#ff0000;
+        color:#fff;border:none;cursor:pointer;margin-top:14px}}
+  .btn:hover{{background:#cc0000}}
+  .btn-row{{display:flex;gap:10px;flex-wrap:wrap}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🔑 YouTube Auth Manager</h1>
+  <p class="sub">OAuth & auto-refresh dikelola di Koyeb — token disimpan di Vercel</p>
+
+  <div class="card">
+    <h2>Status Token</h2>
+    <div class="badge">{status_text}</div>
+    <div class="btn-row">
+      <a href="/auth/login" class="btn">🔐 Login OAuth YouTube</a>
+      {refresh_btn}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Konfigurasi</h2>
+    <div class="row"><span>Google OAuth</span>
+      <span class="{'ok' if google_configured else 'no'}">{'✅ Terkonfigurasi' if google_configured else '❌ Belum di-set'}</span>
+    </div>
+    <div class="row"><span>Vercel Token Store</span>
+      <span class="{'ok' if store_configured else 'no'}">{'✅ Terkonfigurasi' if store_configured else '❌ Belum di-set'}</span>
+    </div>
+    <div class="row"><span>Store URL</span>
+      <span class="val">{store_url or '(belum di-set)'}</span>
+    </div>
+  </div>
+</div>
+</body></html>"""
+
+@app.route('/auth/login')
+def auth_login():
+    """Redirect ke Google OAuth."""
+    if not OAUTHLIB_OK:
+        return "Library google-auth-oauthlib tidak tersedia", 500
+    client_id     = os.environ.get("GOOGLE_CLIENT_ID", "")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        return "Set GOOGLE_CLIENT_ID dan GOOGLE_CLIENT_SECRET di env var Koyeb.", 400
+
+    client_config = {"web": {
+        "client_id": client_id, "client_secret": client_secret,
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "redirect_uris": [_get_oauth_redirect_uri()],
+    }}
+    flow = OAuthFlow.from_client_config(client_config, scopes=_OAUTH_SCOPES if 'OAUTHLIB_OK' in dir() else SCOPES)
+    flow.redirect_uri = _get_oauth_redirect_uri()
+    auth_url, state = flow.authorization_url(prompt="consent", access_type="offline")
+    _oauth_state_store[state] = True
+    from flask import redirect as _redir
+    return _redir(auth_url)
+
+@app.route('/auth/callback')
+def auth_callback():
+    """Terima token dari Google, simpan ke Vercel store."""
+    if not OAUTHLIB_OK:
+        return "Library google-auth-oauthlib tidak tersedia", 500
+
+    code  = request.args.get("code", "")
+    state = request.args.get("state", "")
+    if not code:
+        return "Tidak ada authorization code dari Google.", 400
+
+    client_id     = os.environ.get("GOOGLE_CLIENT_ID", "")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+    client_config = {"web": {
+        "client_id": client_id, "client_secret": client_secret,
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "redirect_uris": [_get_oauth_redirect_uri()],
+    }}
+    try:
+        import os as _os
+        _os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+        _scopes = SCOPES
+        flow = OAuthFlow.from_client_config(client_config, scopes=_scopes, state=state)
+        flow.redirect_uri = _get_oauth_redirect_uri()
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+        _push_token_to_store(creds)
+        _oauth_state_store.pop(state, None)
+        from flask import redirect as _redir
+        return _redir("/auth")
+    except Exception as e:
+        return f"Gagal ambil token: {e}", 500
+
+@app.route('/auth/refresh')
+def auth_force_refresh():
+    """Force refresh token & simpan ke Vercel."""
+    token_data = _pull_token_from_store()
+    if not token_data:
+        from flask import redirect as _redir
+        return _redir("/auth")
+    try:
+        creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+        creds.refresh(Request())
+        _push_token_to_store(creds)
+    except Exception as e:
+        print(f"[AUTH] Force refresh error: {e}")
+    from flask import redirect as _redir
+    return _redir("/auth")
 
 # ============================================================
 # FLASK ROUTES
