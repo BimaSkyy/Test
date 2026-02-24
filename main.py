@@ -1560,6 +1560,367 @@ def video_update_bulk(video_id):
         return jsonify({"error": str(e)}), 500
 
 # ============================================================
+# REST API — UNTUK SCRIPT LUAR
+# ============================================================
+#
+# Endpoint ini memungkinkan script lain mengirim video + timer
+# dan secara otomatis:
+#   1. Upload video ke GitHub
+#   2. Cek duplikat & riwayat
+#   3. Masukkan ke antrian dengan timer yg dikirim
+#   4. Kembalikan respons lengkap
+#
+# Cara pakai:
+#   POST /api/v1/submit
+#   Content-Type: multipart/form-data
+#
+# Field:
+#   video         (file)   — file video mp4/dll  [WAJIB]
+#   timer_value   (int)    — angka timer          [WAJIB]
+#   timer_unit    (str)    — hours / minutes / seconds [default: hours]
+#   category      (str)    — ID kategori YouTube (1-28)  [optional]
+#   title         (str)    — judul video          [optional, pakai default about]
+#   description   (str)    — deskripsi            [optional]
+#   tags          (str)    — tags dipisah koma    [optional]
+#   api_key       (str)    — API key keamanan     [optional jika API_KEY env tidak di-set]
+#
+# Response JSON:
+#   {
+#     "success": true,
+#     "message": "...",
+#     "queue_id": "...",
+#     "github": { "path": "...", "url": "..." },
+#     "timer": { "value": 10, "unit": "hours", "upload_at": "..." },
+#     "video_info": { "filename": "...", "size_mb": ... },
+#     "queue_status": "pending" | "waiting",
+#     "duplicate": false
+#   }
+
+API_KEY = os.environ.get("API_KEY", "")  # Jika kosong, tidak perlu autentikasi
+
+def _check_api_key():
+    """Cek API key dari header atau form data."""
+    if not API_KEY:
+        return True  # Tidak ada API key yang di-set, lewati pengecekan
+    provided = (
+        request.headers.get("X-API-Key") or
+        request.headers.get("Authorization", "").replace("Bearer ", "") or
+        (request.json or {}).get("api_key") or
+        request.form.get("api_key") or
+        request.args.get("api_key")
+    )
+    return provided == API_KEY
+
+@app.route('/api/v1/submit', methods=['POST'])
+def api_v1_submit():
+    """
+    Endpoint utama REST API.
+    Terima video + konfigurasi dari script lain, proses otomatis, kembalikan respons.
+    """
+    # === 1. Auth ===
+    if not _check_api_key():
+        return jsonify({"success": False, "error": "Unauthorized. API key salah atau tidak ada."}), 401
+
+    # === 2. Validasi file ===
+    if 'video' not in request.files:
+        return jsonify({"success": False, "error": "Field 'video' tidak ada. Kirim file video."}), 400
+    f = request.files['video']
+    if not f or not f.filename:
+        return jsonify({"success": False, "error": "File video kosong."}), 400
+
+    # === 3. Ambil parameter ===
+    timer_value = request.form.get('timer_value', 0)
+    timer_unit  = request.form.get('timer_unit', 'hours').lower()
+    category    = request.form.get('category', '')
+    title       = request.form.get('title', '')
+    description = request.form.get('description', '')
+    tags_raw    = request.form.get('tags', '')
+
+    try:
+        timer_value = float(timer_value)
+    except (ValueError, TypeError):
+        return jsonify({"success": False, "error": f"timer_value tidak valid: {timer_value}"}), 400
+
+    if timer_unit not in ('hours', 'minutes', 'seconds'):
+        return jsonify({"success": False,
+                        "error": "timer_unit harus 'hours', 'minutes', atau 'seconds'"}), 400
+
+    timer_seconds = timer_value * (3600 if timer_unit == 'hours' else 60 if timer_unit == 'minutes' else 1)
+
+    tags = [t.strip() for t in tags_raw.split(',') if t.strip()] if tags_raw else []
+
+    # === 4. Simpan file sementara ===
+    uid       = uuid.uuid4().hex[:8]
+    base, ext = os.path.splitext(secure_filename(f.filename))
+    fname     = f"{base}_{uid}{ext}"
+    fpath     = temp_path(fname)
+    f.save(fpath)
+
+    # === 5. Validasi file video ===
+    valid, reason = is_valid_video(fpath)
+    if not valid:
+        cleanup_temp(fname)
+        return jsonify({"success": False, "error": f"File tidak valid: {reason}"}), 400
+
+    file_size = os.path.getsize(fpath)
+
+    # === 6. Hash & cek duplikat ===
+    try:
+        file_hash = get_file_hash(fpath)
+    except Exception as e:
+        cleanup_temp(fname)
+        return jsonify({"success": False, "error": f"Gagal membaca file: {e}"}), 500
+
+    is_dup, dup_vid_id, dup_reason = check_duplicate(file_hash)
+    if is_dup:
+        cleanup_temp(fname)
+        resp = {
+            "success": True,
+            "duplicate": True,
+            "message": dup_reason,
+            "video_info": {"filename": f.filename, "size_mb": round(file_size / 1024 / 1024, 2)},
+        }
+        if dup_vid_id:
+            resp["youtube"] = {
+                "video_id": dup_vid_id,
+                "link": f"https://youtu.be/{dup_vid_id}",
+                "youtube_url": f"https://www.youtube.com/watch?v={dup_vid_id}"
+            }
+        return jsonify(resp)
+
+    # === 7. Upload video ke GitHub ===
+    github_path = f"video/{fname}"
+    print(f"[API v1] Upload ke GitHub: {github_path}")
+    gh_ok, gh_result = gh_upload_video(fpath, github_path)
+    if not gh_ok:
+        cleanup_temp(fname)
+        return jsonify({
+            "success": False,
+            "error": f"Gagal upload ke GitHub: {gh_result}",
+            "hint": "Cek GITHUB_TOKEN dan GITHUB_REPO environment variable."
+        }), 500
+
+    github_url = f"https://github.com/{GITHUB_REPO}/blob/main/{github_path}"
+    github_raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/{github_path}"
+
+    # === 8. Load about default & override jika ada input ===
+    about = load_about()
+    final_title       = title or about.get('title', '')
+    final_description = description or about.get('description', '')
+    final_tags        = tags or about.get('tags', [])
+    final_category    = category or about.get('category', '20')
+
+    # === 9. Masukkan ke antrian ===
+    now_ts = time.time()
+    with queue_lock:
+        queue    = load_queue()
+        has_busy = any(q.get("status") in ("pending", "uploading", "waiting") for q in queue)
+
+        if has_busy:
+            status       = "waiting"
+            upload_at_ts = None
+            upload_at    = "(menunggu giliran)"
+        else:
+            status       = "pending"
+            upload_at_ts = now_ts + timer_seconds
+            upload_at    = datetime.fromtimestamp(upload_at_ts).strftime("%Y-%m-%d %H:%M:%S")
+
+        item = {
+            "id":               str(uuid.uuid4()),
+            "filename":         fname,
+            "file_hash":        file_hash,
+            "github_path":      github_path,
+            "title":            final_title,
+            "description":      final_description,
+            "tags":             final_tags,
+            "category":         final_category,
+            "source":           "api_v1",
+            "added_at":         time.strftime("%Y-%m-%d %H:%M:%S"),
+            "added_at_ts":      now_ts,
+            "timeout_seconds":  timer_seconds,
+            "timeout_value":    timer_value,
+            "timeout_unit":     timer_unit,
+            "upload_at_ts":     upload_at_ts,
+            "upload_at":        upload_at,
+            "status":           status,
+            "remaining_seconds": timer_seconds if status == "pending" else None,
+            "playlist_id":      about.get("playlist", ""),
+        }
+        queue.append(item)
+        save_queue(queue, force_gh=True)
+
+    print(f"[API v1] Berhasil: {fname} → antrian {item['id']} [{status}]")
+
+    # === 10. Buat respons lengkap ===
+    # Format timer yang human-readable
+    if timer_unit == 'hours':
+        timer_str = f"{timer_value} jam"
+    elif timer_unit == 'minutes':
+        timer_str = f"{timer_value} menit"
+    else:
+        timer_str = f"{timer_value} detik"
+
+    return jsonify({
+        "success": True,
+        "duplicate": False,
+        "message": f"Video berhasil diterima dan dimasukkan ke antrian. Upload akan dilakukan dalam {timer_str}.",
+        "queue_id":     item["id"],
+        "queue_status": status,
+        "github": {
+            "path":    github_path,
+            "url":     github_url,
+            "raw_url": github_raw_url,
+            "repo":    GITHUB_REPO,
+        },
+        "timer": {
+            "value":     timer_value,
+            "unit":      timer_unit,
+            "seconds":   timer_seconds,
+            "upload_at": upload_at,
+            "human":     timer_str,
+        },
+        "video_info": {
+            "original_filename": f.filename,
+            "saved_filename":    fname,
+            "file_hash":         file_hash,
+            "size_bytes":        file_size,
+            "size_mb":           round(file_size / 1024 / 1024, 2),
+        },
+        "metadata": {
+            "title":       final_title,
+            "description": final_description,
+            "tags":        final_tags,
+            "category":    final_category,
+        },
+        "check_status_url": f"/api/v1/status/{item['id']}",
+    }), 202
+
+
+@app.route('/api/v1/status/<queue_id>', methods=['GET'])
+def api_v1_status(queue_id):
+    """Cek status antrian berdasarkan queue_id."""
+    if not _check_api_key():
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+    queue = load_queue()
+    item  = next((q for q in queue if q.get("id") == queue_id), None)
+
+    if not item:
+        # Cek di riwayat (mungkin sudah selesai diupload)
+        riwayat = load_riwayat()
+        hist = next((r for r in riwayat if r.get("queue_id") == queue_id), None)
+        if hist:
+            return jsonify({
+                "success": True,
+                "queue_id": queue_id,
+                "status": "done",
+                "youtube": {
+                    "video_id": hist.get("video_id"),
+                    "link": hist.get("link"),
+                    "youtube_url": hist.get("youtube_url"),
+                    "thumbnail": hist.get("thumbnail"),
+                },
+                "uploaded_at": hist.get("tanggal_upload"),
+            })
+        return jsonify({"success": False, "error": "Queue ID tidak ditemukan"}), 404
+
+    now_ts    = time.time()
+    remaining = None
+    if item.get("status") == "pending" and item.get("upload_at_ts"):
+        remaining = max(0, item["upload_at_ts"] - now_ts)
+
+    resp = {
+        "success":          True,
+        "queue_id":         queue_id,
+        "status":           item.get("status"),
+        "title":            item.get("title"),
+        "github_path":      item.get("github_path"),
+        "upload_at":        item.get("upload_at"),
+        "remaining_seconds": round(remaining, 1) if remaining is not None else None,
+        "added_at":         item.get("added_at"),
+    }
+
+    if item.get("status") == "done":
+        resp["youtube"] = {
+            "video_id":   item.get("video_id"),
+            "link":       item.get("link"),
+            "youtube_url": f"https://www.youtube.com/watch?v={item.get('video_id')}" if item.get("video_id") else None,
+        }
+        resp["uploaded_at"] = item.get("uploaded_at")
+    elif item.get("status") == "failed":
+        resp["error"] = item.get("error", "Unknown error")
+
+    return jsonify(resp)
+
+
+@app.route('/api/v1/queue', methods=['GET'])
+def api_v1_queue():
+    """Lihat semua antrian (opsional dengan filter status)."""
+    if not _check_api_key():
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+    status_filter = request.args.get('status')
+    queue = load_queue()
+    now_ts = time.time()
+
+    result = []
+    for item in queue:
+        if status_filter and item.get("status") != status_filter:
+            continue
+        remaining = None
+        if item.get("status") == "pending" and item.get("upload_at_ts"):
+            remaining = max(0, item["upload_at_ts"] - now_ts)
+        result.append({
+            "queue_id":         item.get("id"),
+            "status":           item.get("status"),
+            "title":            item.get("title"),
+            "upload_at":        item.get("upload_at"),
+            "remaining_seconds": round(remaining, 1) if remaining is not None else None,
+            "added_at":         item.get("added_at"),
+            "source":           item.get("source"),
+            "github_path":      item.get("github_path"),
+            "video_id":         item.get("video_id"),
+            "link":             item.get("link"),
+            "error":            item.get("error"),
+        })
+
+    return jsonify({
+        "success": True,
+        "total":   len(result),
+        "items":   result
+    })
+
+
+@app.route('/api/v1/info', methods=['GET'])
+def api_v1_info():
+    """Info endpoint — untuk verifikasi API aktif dan cek konfigurasi."""
+    return jsonify({
+        "success":      True,
+        "api_version":  "1.0",
+        "auth_required": bool(API_KEY),
+        "github_repo":  GITHUB_REPO,
+        "endpoints": {
+            "submit":     "POST /api/v1/submit",
+            "status":     "GET  /api/v1/status/<queue_id>",
+            "queue_list": "GET  /api/v1/queue",
+            "info":       "GET  /api/v1/info",
+        },
+        "submit_fields": {
+            "video":       "file — file video [WAJIB]",
+            "timer_value": "int/float — angka timer [WAJIB]",
+            "timer_unit":  "str — hours | minutes | seconds [default: hours]",
+            "category":    "str — ID kategori YouTube [optional]",
+            "title":       "str — judul video [optional]",
+            "description": "str — deskripsi [optional]",
+            "tags":        "str — tags dipisah koma [optional]",
+            "api_key":     "str — API key [jika diperlukan]",
+        },
+        "timer_units": ["hours", "minutes", "seconds"],
+        "categories":  YOUTUBE_CATEGORIES,
+    })
+
+
+# ============================================================
 # STARTUP & MAIN
 # ============================================================
 
