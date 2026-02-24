@@ -435,45 +435,52 @@ def check_duplicate(file_hash: str):
             return True, None, f"Sudah ada di antrian: {item.get('title','')}"
     return False, None, ""
 
+# ============================================================
+# JSONBIN — simpan & ambil token langsung dari Koyeb
+# ============================================================
+
+JSONBIN_BIN_ID  = os.environ.get("JSONBIN_BIN_ID", "")
+JSONBIN_API_KEY = os.environ.get("JSONBIN_API_KEY", "")
+JSONBIN_URL     = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
+
+def _jb_headers():
+    return {
+        "X-Master-Key": JSONBIN_API_KEY,
+        "Content-Type": "application/json"
+    }
+
 def _push_token_to_store(creds):
-    """Kirim token terbaru ke Vercel token store."""
-    if not REQUESTS_AVAILABLE: return
-    store_url    = os.environ.get("TOKEN_STORE_URL", "").rstrip("/")
-    store_secret = os.environ.get("TOKEN_STORE_SECRET", "")
-    if not store_url or not store_secret: return
+    """Simpan token ke JSONBin."""
+    if not REQUESTS_AVAILABLE or not JSONBIN_BIN_ID or not JSONBIN_API_KEY:
+        print("[AUTH] JSONBin belum dikonfigurasi, skip simpan token.")
+        return
     try:
         import requests as r
         token_dict = json.loads(creds.to_json())
-        resp = r.post(
-            f"{store_url}/api/save-token",
-            headers={"X-Store-Secret": store_secret},
-            json={"token": token_dict},
-            timeout=10
-        )
+        payload = {
+            "token": token_dict,
+            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        resp = r.put(JSONBIN_URL, headers=_jb_headers(), json=payload, timeout=10)
         if resp.status_code == 200:
-            print("[AUTH] Token berhasil disimpan ke Vercel store")
+            print("[AUTH] Token berhasil disimpan ke JSONBin")
         else:
-            print(f"[AUTH] Gagal kirim token ke store: {resp.status_code}")
+            print(f"[AUTH] Gagal simpan token ke JSONBin: {resp.status_code} {resp.text[:200]}")
     except Exception as e:
         print(f"[AUTH] Push token error: {e}")
 
-def _pull_token_from_store() -> dict | None:
-    """Ambil token dari Vercel token store."""
-    if not REQUESTS_AVAILABLE: return None
-    store_url    = os.environ.get("TOKEN_STORE_URL", "").rstrip("/")
-    store_secret = os.environ.get("TOKEN_STORE_SECRET", "")
-    if not store_url or not store_secret: return None
+def _pull_token_from_store():
+    """Ambil token dari JSONBin."""
+    if not REQUESTS_AVAILABLE or not JSONBIN_BIN_ID or not JSONBIN_API_KEY:
+        return None
     try:
         import requests as r
-        resp = r.get(
-            f"{store_url}/api/get-token",
-            headers={"X-Store-Secret": store_secret},
-            timeout=10
-        )
+        resp = r.get(JSONBIN_URL + "/latest", headers=_jb_headers(), timeout=10)
         if resp.status_code == 200:
-            data = resp.json()
-            if data.get("ok") and data.get("token"):
-                return data["token"]
+            record = resp.json().get("record", {})
+            token = record.get("token")
+            if token and isinstance(token, dict) and token.get("token"):
+                return token
         return None
     except Exception as e:
         print(f"[AUTH] Pull token error: {e}")
@@ -481,22 +488,22 @@ def _pull_token_from_store() -> dict | None:
 
 def load_credentials():
     """
-    Ambil credentials YouTube.
-    Logic refresh ada di sini (Koyeb). Vercel hanya tempat simpan.
+    Ambil credentials YouTube dari JSONBin.
+    Auto-refresh jika expired, simpan balik ke JSONBin.
     """
     if not GOOGLE_AVAILABLE: return None
 
-    # ── Coba dari Vercel token store ──────────────────────────
+    # ── Prioritas 1: JSONBin ──────────────────────────────────
     token_data = _pull_token_from_store()
 
-    # ── Fallback: env var (legacy) ────────────────────────────
+    # ── Prioritas 2: env var YOUTUBE_TOKEN_JSON (legacy) ──────
     if not token_data:
         token_json_str = os.environ.get("YOUTUBE_TOKEN_JSON", "")
         if token_json_str:
             try: token_data = json.loads(token_json_str)
             except: pass
 
-    # ── Fallback: file lokal (development) ───────────────────
+    # ── Prioritas 3: file lokal (development) ─────────────────
     if not token_data:
         token_path = os.path.join(BASE_DIR, "token.json")
         if os.path.exists(token_path):
@@ -515,16 +522,14 @@ def load_credentials():
         print(f"[AUTH] Token tidak valid: {e}")
         return None
 
-    # Token masih valid
     if creds.valid:
         return creds
 
-    # Token expired — refresh otomatis
     if creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-            print("[AUTH] Token auto-refresh berhasil")
-            _push_token_to_store(creds)  # simpan token baru ke Vercel
+            print("[AUTH] Token auto-refresh berhasil, menyimpan ke JSONBin...")
+            _push_token_to_store(creds)
             return creds
         except Exception as e:
             print(f"[AUTH] Auto-refresh gagal: {e}")
@@ -1022,7 +1027,6 @@ def auth_page():
     creds = load_credentials()
     token_valid = creds is not None and creds.valid
 
-    store_url     = os.environ.get("TOKEN_STORE_URL", "")
     client_id     = os.environ.get("GOOGLE_CLIENT_ID", "")
     client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 
@@ -1033,8 +1037,8 @@ def auth_page():
         status_color = "#f87171"
         status_text  = "❌ Belum ada token / expired — klik Login di bawah"
 
-    google_configured = bool(client_id and client_secret)
-    store_configured  = bool(store_url and os.environ.get("TOKEN_STORE_SECRET"))
+    google_configured  = bool(client_id and client_secret)
+    jsonbin_configured = bool(JSONBIN_BIN_ID and JSONBIN_API_KEY)
 
     refresh_btn = '<a href="/auth/refresh" style="display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border-radius:8px;font-size:.88rem;font-weight:600;text-decoration:none;background:#2a2a2a;color:#ccc;border:1px solid #3a3a3a;margin-top:14px">🔄 Force Refresh</a>' if token_valid else ''
 
@@ -1070,7 +1074,7 @@ def auth_page():
 <body>
 <div class="wrap">
   <h1>🔑 YouTube Auth Manager</h1>
-  <p class="sub">OAuth & auto-refresh dikelola di Koyeb — token disimpan di Vercel</p>
+  <p class="sub">OAuth & auto-refresh dikelola di Koyeb — token disimpan di JSONBin</p>
 
   <div class="card">
     <h2>Status Token</h2>
@@ -1086,11 +1090,8 @@ def auth_page():
     <div class="row"><span>Google OAuth</span>
       <span class="{'ok' if google_configured else 'no'}">{'✅ Terkonfigurasi' if google_configured else '❌ Belum di-set'}</span>
     </div>
-    <div class="row"><span>Vercel Token Store</span>
-      <span class="{'ok' if store_configured else 'no'}">{'✅ Terkonfigurasi' if store_configured else '❌ Belum di-set'}</span>
-    </div>
-    <div class="row"><span>Store URL</span>
-      <span class="val">{store_url or '(belum di-set)'}</span>
+    <div class="row"><span>JSONBin Storage</span>
+      <span class="{'ok' if jsonbin_configured else 'no'}">{'✅ Terkonfigurasi' if jsonbin_configured else '❌ Belum di-set JSONBIN_BIN_ID / JSONBIN_API_KEY'}</span>
     </div>
   </div>
 </div>
@@ -1121,7 +1122,7 @@ def auth_login():
 
 @app.route('/auth/callback')
 def auth_callback():
-    """Terima token dari Google, simpan ke Vercel store."""
+    """Terima token dari Google, simpan ke JSONBin."""
     if not OAUTHLIB_OK:
         return "Library google-auth-oauthlib tidak tersedia", 500
 
