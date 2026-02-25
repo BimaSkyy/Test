@@ -2224,16 +2224,23 @@ def channel_update():
 
         updated = []
 
-        # Update description — YouTube requires title field too in snippet update
+        # Update description via brandingSettings (snippet update is restricted by YouTube API)
         if "description" in data:
+            desc = data["description"]
+            # YouTube deskripsi channel max 1000 karakter
+            MAX_DESC = 1000
+            truncated_desc = False
+            if len(desc) > MAX_DESC:
+                desc = desc[:MAX_DESC]
+                truncated_desc = True
             youtube.channels().update(
-                part="snippet",
+                part="brandingSettings",
                 body={
                     "id": ch_id,
-                    "snippet": {
-                        "title":       snip.get("title", ""),
-                        "description": data["description"],
-                        "country":     snip.get("country", ""),
+                    "brandingSettings": {
+                        "channel": {
+                            "description": desc
+                        }
                     }
                 }
             ).execute()
@@ -2252,6 +2259,20 @@ def channel_update():
                 kw_str = " ".join(kw_parts)
             else:
                 kw_str = str(keywords_list)
+            # YouTube limit: 500 karakter untuk keywords
+            MAX_KW = 500
+            if len(kw_str) > MAX_KW:
+                # Potong per-tag sampai muat
+                kw_parts_trimmed = []
+                total = 0
+                for part in kw_parts:
+                    needed = len(part) + (1 if kw_parts_trimmed else 0)
+                    if total + needed > MAX_KW:
+                        break
+                    kw_parts_trimmed.append(part)
+                    total += needed
+                kw_str = " ".join(kw_parts_trimmed)
+
             youtube.channels().update(
                 part="brandingSettings",
                 body={
@@ -2264,8 +2285,17 @@ def channel_update():
                 }
             ).execute()
             updated.append("keywords")
+            # Kembalikan info berapa tag yang berhasil masuk
+            saved_count = len(kw_str.split()) if not isinstance(keywords_list, list) else sum(1 for kw in keywords_list if kw.strip() and kw.strip() in kw_str)
 
-        return jsonify({"status": "ok", "updated": updated})
+        result = {"status": "ok", "updated": updated}
+        if "keywords" in data:
+            result["keywords_saved"] = kw_str
+            result["keywords_length"] = len(kw_str)
+            result["keywords_truncated"] = len(kw_str) < len(" ".join(kw_parts)) if "kw_parts" in dir() else False
+        if "description" in data:
+            result["description_truncated"] = truncated_desc if "truncated_desc" in dir() else False
+        return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
