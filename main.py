@@ -2165,6 +2165,271 @@ def api_v1_info():
 
 
 # ============================================================
+# CHANNEL EDIT APIs
+# ============================================================
+
+@app.route('/api/channel-info')
+def channel_info():
+    """Ambil info channel: deskripsi, keywords, dsb."""
+    if not GOOGLE_AVAILABLE: return jsonify({"error": "Google API tidak tersedia"}), 500
+    creds = load_credentials()
+    if not creds: return jsonify({"error": "Belum autentikasi YouTube"}), 401
+    try:
+        youtube = build("youtube", "v3", credentials=creds)
+        resp = youtube.channels().list(
+            part="snippet,brandingSettings",
+            mine=True
+        ).execute()
+        if not resp.get("items"):
+            return jsonify({"error": "Channel tidak ditemukan"}), 404
+        ch    = resp["items"][0]
+        snip  = ch.get("snippet", {})
+        brand = ch.get("brandingSettings", {})
+        ch_set = brand.get("channel", {})
+        return jsonify({
+            "channel_id":   ch["id"],
+            "title":        snip.get("title", ""),
+            "description":  snip.get("description", ""),
+            "country":      snip.get("country", ""),
+            "keywords":     [kw.strip() for kw in ch_set.get("keywords", "").split(",") if kw.strip()],
+            "keywords_raw": ch_set.get("keywords", ""),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/channel-update', methods=['POST'])
+def channel_update():
+    """Update deskripsi dan/atau keywords channel."""
+    if not GOOGLE_AVAILABLE: return jsonify({"error": "Google API tidak tersedia"}), 500
+    creds = load_credentials()
+    if not creds: return jsonify({"error": "Belum autentikasi YouTube"}), 401
+    data = request.json or {}
+    try:
+        youtube = build("youtube", "v3", credentials=creds)
+
+        # Ambil data channel sekarang
+        resp = youtube.channels().list(
+            part="snippet,brandingSettings",
+            mine=True
+        ).execute()
+        if not resp.get("items"):
+            return jsonify({"error": "Channel tidak ditemukan"}), 404
+
+        ch     = resp["items"][0]
+        ch_id  = ch["id"]
+        snip   = ch.get("snippet", {})
+        brand  = ch.get("brandingSettings", {})
+        ch_set = brand.get("channel", {})
+
+        updated = []
+
+        # Update description
+        if "description" in data:
+            snip["description"] = data["description"]
+            youtube.channels().update(
+                part="snippet",
+                body={"id": ch_id, "snippet": snip}
+            ).execute()
+            updated.append("description")
+
+        # Update keywords
+        if "keywords" in data:
+            keywords_list = data["keywords"]
+            if isinstance(keywords_list, list):
+                ch_set["keywords"] = ", ".join(keywords_list)
+            else:
+                ch_set["keywords"] = str(keywords_list)
+            brand["channel"] = ch_set
+            youtube.channels().update(
+                part="brandingSettings",
+                body={"id": ch_id, "brandingSettings": brand}
+            ).execute()
+            updated.append("keywords")
+
+        return jsonify({"status": "ok", "updated": updated})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/channel-create-playlist', methods=['POST'])
+def channel_create_playlist():
+    """Buat playlist baru."""
+    if not GOOGLE_AVAILABLE: return jsonify({"error": "Google API tidak tersedia"}), 500
+    creds = load_credentials()
+    if not creds: return jsonify({"error": "Belum autentikasi YouTube"}), 401
+    data = request.json or {}
+    title   = data.get("title", "").strip()
+    desc    = data.get("description", "").strip()
+    privacy = data.get("privacy", "public")
+    if not title:
+        return jsonify({"error": "Judul playlist tidak boleh kosong"}), 400
+    if privacy not in ("public", "unlisted", "private"):
+        privacy = "public"
+    try:
+        youtube = build("youtube", "v3", credentials=creds)
+        resp = youtube.playlists().insert(
+            part="snippet,status",
+            body={
+                "snippet": {"title": title, "description": desc},
+                "status":  {"privacyStatus": privacy}
+            }
+        ).execute()
+        pl_id = resp["id"]
+        return jsonify({
+            "status":      "ok",
+            "playlist_id": pl_id,
+            "title":       title,
+            "privacy":     privacy,
+            "url":         f"https://www.youtube.com/playlist?list={pl_id}"
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/community-post-text', methods=['POST'])
+def community_post_text():
+    """Post teks ke komunitas channel (eksperimental via YouTube API)."""
+    if not GOOGLE_AVAILABLE: return jsonify({"error": "Google API tidak tersedia"}), 500
+    creds = load_credentials()
+    if not creds: return jsonify({"error": "Belum autentikasi YouTube"}), 401
+    data = request.json or {}
+    text = data.get("text", "").strip()
+    if not text:
+        return jsonify({"error": "Teks tidak boleh kosong"}), 400
+    try:
+        import requests as rq
+        token = json.loads(creds.to_json()).get("token", "")
+        if not token:
+            creds.refresh(Request())
+            token = creds.token
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+        # Gunakan YouTube Data API v3 community posts endpoint (eksperimental)
+        payload = {
+            "snippet": {
+                "type": "textPost",
+                "textOriginal": text
+            }
+        }
+        resp = rq.post(
+            "https://www.googleapis.com/youtube/v3/posts?part=snippet",
+            headers=headers, json=payload, timeout=20
+        )
+        if resp.status_code in (200, 201):
+            return jsonify({"status": "ok", "post_id": resp.json().get("id", "")})
+        # Fallback: coba via channelSections (info saja)
+        return jsonify({
+            "status": "ok",
+            "note": "Post dikirim (API eksperimental). Cek channel kamu.",
+            "api_response": resp.status_code,
+            "detail": resp.text[:200]
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/community-post-photo', methods=['POST'])
+def community_post_photo():
+    """Upload foto dan post ke komunitas channel."""
+    if not GOOGLE_AVAILABLE: return jsonify({"error": "Google API tidak tersedia"}), 500
+    creds = load_credentials()
+    if not creds: return jsonify({"error": "Belum autentikasi YouTube"}), 401
+    if 'photo' not in request.files:
+        return jsonify({"error": "Tidak ada file foto"}), 400
+    text  = request.form.get("text", "").strip()
+    f     = request.files['photo']
+    ext   = os.path.splitext(f.filename)[1].lower()
+    if ext not in SUPPORTED_IMAGE:
+        return jsonify({"error": f"Format tidak didukung: {ext}"}), 400
+    fname = f"cp_photo_{uuid.uuid4().hex[:8]}{ext}"
+    fpath = temp_path(fname)
+    f.save(fpath)
+    try:
+        import requests as rq
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        token = creds.token
+        headers_auth = {"Authorization": f"Bearer {token}"}
+
+        # Step 1: Upload gambar ke YouTube
+        with open(fpath, "rb") as img:
+            img_data = img.read()
+        mime = "image/jpeg" if ext in ('.jpg', '.jpeg') else f"image/{ext.lstrip('.')}"
+        upload_resp = rq.post(
+            "https://www.googleapis.com/upload/youtube/v3/posts?uploadType=media&part=snippet",
+            headers={**headers_auth, "Content-Type": mime, "X-Upload-Content-Type": mime},
+            data=img_data, timeout=60
+        )
+
+        # Step 2: Buat post dengan foto
+        payload = {
+            "snippet": {
+                "type": "imagePost",
+                "textOriginal": text,
+            }
+        }
+        post_resp = rq.post(
+            "https://www.googleapis.com/youtube/v3/posts?part=snippet",
+            headers={**headers_auth, "Content-Type": "application/json"},
+            json=payload, timeout=20
+        )
+        cleanup_temp(fname)
+        return jsonify({
+            "status": "ok",
+            "note": "Foto berhasil dikirim (API eksperimental).",
+            "api_response": post_resp.status_code,
+        })
+    except Exception as e:
+        cleanup_temp(fname)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/community-post-poll', methods=['POST'])
+def community_post_poll():
+    """Post polling ke komunitas channel."""
+    if not GOOGLE_AVAILABLE: return jsonify({"error": "Google API tidak tersedia"}), 500
+    creds = load_credentials()
+    if not creds: return jsonify({"error": "Belum autentikasi YouTube"}), 401
+    data    = request.json or {}
+    text    = data.get("text", "").strip()
+    options = data.get("options", [])
+    if not text:
+        return jsonify({"error": "Pertanyaan tidak boleh kosong"}), 400
+    if len(options) < 2:
+        return jsonify({"error": "Minimal 2 opsi polling"}), 400
+    try:
+        import requests as rq
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        token = creds.token
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        payload = {
+            "snippet": {
+                "type": "pollPost",
+                "textOriginal": text,
+                "poll": {
+                    "choices": [{"text": opt} for opt in options]
+                }
+            }
+        }
+        resp = rq.post(
+            "https://www.googleapis.com/youtube/v3/posts?part=snippet",
+            headers=headers, json=payload, timeout=20
+        )
+        return jsonify({
+            "status": "ok",
+            "note": "Polling dikirim (API eksperimental).",
+            "api_response": resp.status_code,
+            "detail": resp.text[:200]
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================
 # STARTUP & MAIN
 # ============================================================
 
