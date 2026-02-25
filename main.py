@@ -2224,26 +2224,44 @@ def channel_update():
 
         updated = []
 
-        # Update description
+        # Update description — YouTube requires title field too in snippet update
         if "description" in data:
-            snip["description"] = data["description"]
             youtube.channels().update(
                 part="snippet",
-                body={"id": ch_id, "snippet": snip}
+                body={
+                    "id": ch_id,
+                    "snippet": {
+                        "title":       snip.get("title", ""),
+                        "description": data["description"],
+                        "country":     snip.get("country", ""),
+                    }
+                }
             ).execute()
             updated.append("description")
 
-        # Update keywords
+        # Update keywords — YouTube expects space-separated string in brandingSettings
         if "keywords" in data:
             keywords_list = data["keywords"]
             if isinstance(keywords_list, list):
-                ch_set["keywords"] = ", ".join(keywords_list)
+                kw_parts = []
+                for kw in keywords_list:
+                    kw = kw.strip()
+                    if not kw:
+                        continue
+                    kw_parts.append(f'"{kw}"' if ' ' in kw else kw)
+                kw_str = " ".join(kw_parts)
             else:
-                ch_set["keywords"] = str(keywords_list)
-            brand["channel"] = ch_set
+                kw_str = str(keywords_list)
             youtube.channels().update(
                 part="brandingSettings",
-                body={"id": ch_id, "brandingSettings": brand}
+                body={
+                    "id": ch_id,
+                    "brandingSettings": {
+                        "channel": {
+                            "keywords": kw_str
+                        }
+                    }
+                }
             ).execute()
             updated.append("keywords")
 
