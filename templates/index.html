@@ -791,6 +791,13 @@
       </svg>
       Edit Video
     </div>
+    <div class="tab" data-tab="channeledit">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22.54 6.42a2.78 2.78 0 0 0-1.95-1.96C18.88 4 12 4 12 4s-6.88 0-8.59.46a2.78 2.78 0 0 0-1.95 1.96A29 29 0 0 0 1 12a29 29 0 0 0 .46 5.58A2.78 2.78 0 0 0 3.41 19.6C5.12 20 12 20 12 20s6.88 0 8.59-.46a2.78 2.78 0 0 0 1.95-1.95A29 29 0 0 0 23 12a29 29 0 0 0-.46-5.58z"/>
+        <polygon points="9.75 15.02 15.5 12 9.75 8.98 9.75 15.02"/>
+      </svg>
+      Channel Edit
+    </div>
   </nav>
 </div>
 
@@ -2184,3 +2191,369 @@ function closeEvModal(id) {
 .inp { width: 100%; padding: 8px 10px; border: 1px solid var(--gray-200); border-radius: var(--radius-sm); font-size: 13px; font-family: inherit; background: var(--white); }
 textarea.inp { resize: vertical; }
 </style>
+
+<!-- ══ TAB: CHANNEL EDIT ══ -->
+<div class="tab-panel" id="panel-channeledit">
+
+  <!-- ── Section: Deskripsi Channel ── -->
+  <div class="card" style="margin-bottom:12px;">
+    <div class="card-title">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      Deskripsi Channel
+    </div>
+    <p class="card-sub">Ubah atau tambahkan deskripsi channel YouTube kamu</p>
+    <div style="margin-top:12px;display:flex;flex-direction:column;gap:10px;">
+      <div>
+        <label class="form-label">Deskripsi Baru</label>
+        <textarea id="chDesc" class="inp" rows="5" placeholder="Masukkan deskripsi channel kamu..."></textarea>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="btn btn-outline" onclick="chLoadDesc()">📥 Load Deskripsi Sekarang</button>
+        <button class="btn btn-primary" onclick="chSaveDesc()">💾 Simpan Deskripsi</button>
+      </div>
+      <div id="chDescStatus" style="font-size:13px;"></div>
+    </div>
+  </div>
+
+  <!-- ── Section: Tag Channel ── -->
+  <div class="card" style="margin-bottom:12px;">
+    <div class="card-title">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+      Tag Channel (Keywords)
+    </div>
+    <p class="card-sub">Atur kata kunci channel untuk membantu algoritma YouTube</p>
+    <div style="margin-top:12px;display:flex;flex-direction:column;gap:10px;">
+      <div>
+        <label class="form-label">Tags (pisah dengan koma)</label>
+        <textarea id="chTags" class="inp" rows="3" placeholder="gaming, shorts, viral, trending, ..."></textarea>
+      </div>
+      <div id="chTagsPreview" style="display:flex;flex-wrap:wrap;gap:4px;min-height:24px;"></div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="btn btn-outline" onclick="chLoadTags()">📥 Load Tags Sekarang</button>
+        <button class="btn btn-primary" onclick="chSaveTags()">💾 Simpan Tags</button>
+      </div>
+      <div id="chTagsStatus" style="font-size:13px;"></div>
+    </div>
+  </div>
+
+  <!-- ── Section: Buat Playlist ── -->
+  <div class="card" style="margin-bottom:12px;">
+    <div class="card-title">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      Buat Playlist Baru
+    </div>
+    <p class="card-sub">Buat playlist baru langsung dari sini</p>
+    <div style="margin-top:12px;display:flex;flex-direction:column;gap:10px;">
+      <div>
+        <label class="form-label">Judul Playlist</label>
+        <input id="plTitle" class="inp" type="text" placeholder="Nama playlist...">
+      </div>
+      <div>
+        <label class="form-label">Deskripsi (opsional)</label>
+        <textarea id="plDesc" class="inp" rows="2" placeholder="Deskripsi playlist..."></textarea>
+      </div>
+      <div>
+        <label class="form-label">Privasi</label>
+        <select id="plPrivacy" class="inp">
+          <option value="public">🌍 Public</option>
+          <option value="unlisted">🔗 Unlisted</option>
+          <option value="private">🔒 Private</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" onclick="chCreatePlaylist()" style="align-self:flex-start;">✅ Buat Playlist</button>
+      <div id="chPlaylistStatus" style="font-size:13px;"></div>
+    </div>
+  </div>
+
+  <!-- ── Section: Postingan Komunitas ── -->
+  <div class="card" style="margin-bottom:12px;">
+    <div class="card-title">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+      Postingan Komunitas
+    </div>
+    <p class="card-sub">Buat postingan ke komunitas channel kamu</p>
+    <div style="margin-top:12px;display:flex;flex-direction:column;gap:12px;">
+
+      <!-- Pilih jenis post -->
+      <div style="display:flex;gap:8px;">
+        <button class="btn-cp-type active" id="cpType-photo" onclick="cpSetType('photo')">🖼️ Foto</button>
+        <button class="btn-cp-type" id="cpType-poll" onclick="cpSetType('poll')">📊 Polling</button>
+        <button class="btn-cp-type" id="cpType-text" onclick="cpSetType('text')">📝 Teks</button>
+      </div>
+
+      <!-- Text / Caption -->
+      <div>
+        <label class="form-label" id="cpTextLabel">Judul / Caption</label>
+        <textarea id="cpText" class="inp" rows="3" placeholder="Tulis sesuatu untuk komunitas kamu..."></textarea>
+      </div>
+
+      <!-- Panel: Foto -->
+      <div id="cpPhotoPanel" style="display:flex;flex-direction:column;gap:10px;">
+        <div class="cp-upload-area" id="cpUploadArea" onclick="document.getElementById('cpPhotoInput').click()">
+          <div id="cpUploadPlaceholder">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.4;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <div style="color:var(--gray-500);font-size:13px;margin-top:6px;">Klik untuk upload foto</div>
+            <div style="color:var(--gray-400);font-size:11px;">JPG, PNG, WEBP</div>
+          </div>
+          <img id="cpPhotoPreview" style="display:none;max-width:100%;max-height:200px;border-radius:8px;object-fit:contain;" />
+        </div>
+        <input type="file" id="cpPhotoInput" accept="image/*" style="display:none;" onchange="cpPreviewPhoto(this)">
+        <div id="cpPhotoName" style="font-size:12px;color:var(--gray-500);"></div>
+      </div>
+
+      <!-- Panel: Polling -->
+      <div id="cpPollPanel" style="display:none;flex-direction:column;gap:8px;">
+        <label class="form-label">Opsi Polling</label>
+        <div id="cpPollOptions" style="display:flex;flex-direction:column;gap:6px;">
+          <input class="inp poll-opt" placeholder="Opsi 1">
+          <input class="inp poll-opt" placeholder="Opsi 2">
+        </div>
+        <button class="btn btn-outline" style="align-self:flex-start;font-size:12px;" onclick="cpAddPollOption()">+ Tambah Opsi</button>
+      </div>
+
+      <!-- Post Button -->
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button class="btn btn-primary" id="cpPostBtn" onclick="chPostCommunity()">📤 Post ke Komunitas</button>
+        <div id="cpStatus" style="font-size:13px;"></div>
+      </div>
+
+      <!-- Note API -->
+      <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;font-size:12px;color:#92400e;">
+        ⚠️ <strong>Catatan:</strong> YouTube Data API v3 belum mendukung pembuatan community post secara resmi. Fitur ini menggunakan pendekatan eksperimental via <code>posts</code> endpoint. Pastikan channel kamu sudah eligible (min. 500 subscriber) untuk community posts.
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<style>
+/* ─── Channel Edit Styles ─── */
+.btn-cp-type {
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--gray-200);
+  background: var(--gray-100);
+  color: var(--gray-600);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-cp-type:hover { background: var(--gray-200); }
+.btn-cp-type.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.cp-upload-area {
+  border: 2px dashed var(--gray-200);
+  border-radius: var(--radius-sm);
+  padding: 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s;
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cp-upload-area:hover { border-color: var(--accent); }
+.cp-upload-area.has-photo { padding: 12px; }
+</style>
+
+<script>
+/* ═══════════════════════════════
+   CHANNEL EDIT — JS
+═══════════════════════════════ */
+
+// ── Deskripsi Channel ──
+async function chLoadDesc() {
+  const st = document.getElementById('chDescStatus');
+  st.textContent = '⏳ Memuat...';
+  try {
+    const r = await fetch('/api/channel-info');
+    const d = await r.json();
+    if (d.error) { st.textContent = '❌ ' + d.error; return; }
+    document.getElementById('chDesc').value = d.description || '';
+    st.innerHTML = '<span style="color:var(--accent)">✅ Deskripsi berhasil dimuat</span>';
+  } catch(e) { st.textContent = '❌ Error: ' + e.message; }
+}
+async function chSaveDesc() {
+  const desc = document.getElementById('chDesc').value.trim();
+  const st = document.getElementById('chDescStatus');
+  if (!desc) { st.textContent = '⚠️ Deskripsi tidak boleh kosong'; return; }
+  st.textContent = '⏳ Menyimpan...';
+  try {
+    const r = await fetch('/api/channel-update', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({description: desc})
+    });
+    const d = await r.json();
+    if (d.error) { st.textContent = '❌ ' + d.error; return; }
+    st.innerHTML = '<span style="color:var(--accent)">✅ Deskripsi berhasil disimpan!</span>';
+  } catch(e) { st.textContent = '❌ Error: ' + e.message; }
+}
+
+// ── Tags Channel ──
+function chRenderTagsPreview() {
+  const raw = document.getElementById('chTags').value;
+  const tags = raw.split(',').map(t=>t.trim()).filter(Boolean);
+  const preview = document.getElementById('chTagsPreview');
+  preview.innerHTML = tags.map(t=>`<span class="ev-tag">${t}</span>`).join('');
+}
+document.getElementById('chTags').addEventListener('input', chRenderTagsPreview);
+
+async function chLoadTags() {
+  const st = document.getElementById('chTagsStatus');
+  st.textContent = '⏳ Memuat...';
+  try {
+    const r = await fetch('/api/channel-info');
+    const d = await r.json();
+    if (d.error) { st.textContent = '❌ ' + d.error; return; }
+    document.getElementById('chTags').value = (d.keywords || []).join(', ');
+    chRenderTagsPreview();
+    st.innerHTML = '<span style="color:var(--accent)">✅ Tags berhasil dimuat</span>';
+  } catch(e) { st.textContent = '❌ Error: ' + e.message; }
+}
+async function chSaveTags() {
+  const raw = document.getElementById('chTags').value;
+  const tags = raw.split(',').map(t=>t.trim()).filter(Boolean);
+  const st = document.getElementById('chTagsStatus');
+  if (!tags.length) { st.textContent = '⚠️ Masukkan minimal 1 tag'; return; }
+  st.textContent = '⏳ Menyimpan...';
+  try {
+    const r = await fetch('/api/channel-update', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({keywords: tags})
+    });
+    const d = await r.json();
+    if (d.error) { st.textContent = '❌ ' + d.error; return; }
+    st.innerHTML = `<span style="color:var(--accent)">✅ ${tags.length} tag berhasil disimpan!</span>`;
+  } catch(e) { st.textContent = '❌ Error: ' + e.message; }
+}
+
+// ── Playlist ──
+async function chCreatePlaylist() {
+  const title = document.getElementById('plTitle').value.trim();
+  const desc  = document.getElementById('plDesc').value.trim();
+  const priv  = document.getElementById('plPrivacy').value;
+  const st    = document.getElementById('chPlaylistStatus');
+  if (!title) { st.textContent = '⚠️ Judul playlist tidak boleh kosong'; return; }
+  st.textContent = '⏳ Membuat playlist...';
+  try {
+    const r = await fetch('/api/channel-create-playlist', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({title, description: desc, privacy: priv})
+    });
+    const d = await r.json();
+    if (d.error) { st.textContent = '❌ ' + d.error; return; }
+    st.innerHTML = `<span style="color:var(--accent)">✅ Playlist "<strong>${title}</strong>" berhasil dibuat!<br>
+      ID: <code>${d.playlist_id}</code> — 
+      <a href="https://www.youtube.com/playlist?list=${d.playlist_id}" target="_blank" class="btn-sm-accent">Lihat di YouTube ↗</a></span>`;
+    document.getElementById('plTitle').value = '';
+    document.getElementById('plDesc').value = '';
+  } catch(e) { st.textContent = '❌ Error: ' + e.message; }
+}
+
+// ── Community Post ──
+let cpCurrentType = 'photo';
+let cpPhotoFile   = null;
+
+function cpSetType(type) {
+  cpCurrentType = type;
+  document.querySelectorAll('.btn-cp-type').forEach(b => b.classList.remove('active'));
+  document.getElementById('cpType-' + type).classList.add('active');
+  document.getElementById('cpPhotoPanel').style.display  = type === 'photo'  ? 'flex' : 'none';
+  document.getElementById('cpPollPanel').style.display   = type === 'poll'   ? 'flex' : 'none';
+  const label = document.getElementById('cpTextLabel');
+  if (type === 'photo')  label.textContent = 'Caption / Judul Foto';
+  if (type === 'poll')   label.textContent = 'Pertanyaan Polling';
+  if (type === 'text')   label.textContent = 'Teks Postingan';
+}
+
+function cpPreviewPhoto(input) {
+  const file = input.files[0];
+  if (!file) return;
+  cpPhotoFile = file;
+  const area = document.getElementById('cpUploadArea');
+  const prev = document.getElementById('cpPhotoPreview');
+  const phld = document.getElementById('cpUploadPlaceholder');
+  const nm   = document.getElementById('cpPhotoName');
+  const reader = new FileReader();
+  reader.onload = e => {
+    prev.src = e.target.result;
+    prev.style.display = 'block';
+    phld.style.display = 'none';
+    area.classList.add('has-photo');
+    nm.textContent = file.name + ' (' + (file.size/1024).toFixed(0) + ' KB)';
+  };
+  reader.readAsDataURL(file);
+}
+
+function cpAddPollOption() {
+  const cnt  = document.querySelectorAll('.poll-opt').length;
+  if (cnt >= 5) return;
+  const inp  = document.createElement('input');
+  inp.className = 'inp poll-opt';
+  inp.placeholder = `Opsi ${cnt + 1}`;
+  document.getElementById('cpPollOptions').appendChild(inp);
+}
+
+async function chPostCommunity() {
+  const text   = document.getElementById('cpText').value.trim();
+  const st     = document.getElementById('cpStatus');
+  const btn    = document.getElementById('cpPostBtn');
+  if (!text) { st.textContent = '⚠️ Teks tidak boleh kosong'; return; }
+
+  btn.disabled = true;
+  st.textContent = '⏳ Memposting...';
+
+  try {
+    if (cpCurrentType === 'photo') {
+      if (!cpPhotoFile) { st.textContent = '⚠️ Pilih foto dulu'; btn.disabled=false; return; }
+      const fd = new FormData();
+      fd.append('photo', cpPhotoFile);
+      fd.append('text', text);
+      const r = await fetch('/api/community-post-photo', {method:'POST', body: fd});
+      const d = await r.json();
+      if (d.error) { st.textContent = '❌ ' + d.error; btn.disabled=false; return; }
+      st.innerHTML = '<span style="color:var(--accent)">✅ Foto berhasil diposting ke komunitas!</span>';
+
+    } else if (cpCurrentType === 'poll') {
+      const opts = [...document.querySelectorAll('.poll-opt')].map(i=>i.value.trim()).filter(Boolean);
+      if (opts.length < 2) { st.textContent = '⚠️ Minimal 2 opsi polling'; btn.disabled=false; return; }
+      const r = await fetch('/api/community-post-poll', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({text, options: opts})
+      });
+      const d = await r.json();
+      if (d.error) { st.textContent = '❌ ' + d.error; btn.disabled=false; return; }
+      st.innerHTML = '<span style="color:var(--accent)">✅ Polling berhasil diposting!</span>';
+
+    } else {
+      const r = await fetch('/api/community-post-text', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({text})
+      });
+      const d = await r.json();
+      if (d.error) { st.textContent = '❌ ' + d.error; btn.disabled=false; return; }
+      st.innerHTML = '<span style="color:var(--accent)">✅ Postingan berhasil dikirim!</span>';
+    }
+    document.getElementById('cpText').value = '';
+    cpPhotoFile = null;
+    document.getElementById('cpPhotoPreview').style.display = 'none';
+    document.getElementById('cpUploadPlaceholder').style.display = 'block';
+    document.getElementById('cpUploadArea').classList.remove('has-photo');
+    document.getElementById('cpPhotoName').textContent = '';
+
+  } catch(e) {
+    st.textContent = '❌ Error: ' + e.message;
+  }
+  btn.disabled = false;
+}
+</script>
