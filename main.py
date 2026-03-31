@@ -762,6 +762,16 @@ def do_youtube_upload(file_path, title, description, tags, category, file_hash, 
     if not GOOGLE_AVAILABLE: return None, "Google API tidak tersedia"
     creds = load_credentials()
     if not creds: return None, "Belum autentikasi YouTube"
+
+    # ── Selalu refresh token sebelum upload ──────────────────
+    try:
+        if creds.refresh_token:
+            creds.refresh(Request())
+            _push_token_to_store(creds)
+            print("[AUTH] Token di-refresh sebelum upload, tersimpan ke JSONBin")
+    except Exception as e:
+        print(f"[AUTH] Pre-upload refresh gagal (lanjut dengan token lama): {e}")
+
     if not os.path.exists(file_path): return None, "File tidak ditemukan"
     if os.path.getsize(file_path) < 10 * 1024: return None, "File terlalu kecil"
 
@@ -2515,3 +2525,223 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print(f'[SERVER] Starting on http://0.0.0.0:{port}')
     app.run(debug=False, host='0.0.0.0', port=port, threaded=True)
+
+# ============================================================
+# ENDPOINT: UPDATE REFRESH TOKEN DARI SERVER LAIN
+# ============================================================
+# POST /api/v1/token
+# Header: X-API-Key: <api_key>  (jika API_KEY di-set)
+# Body JSON:
+#   { "refresh_token": "1//0xxx..." }
+#   atau full token object dari google:
+#   { "token": "ya29...", "refresh_token": "1//0xxx...", "token_uri": "...", ... }
+
+@app.route('/api/v1/token', methods=['POST'])
+def api_v1_update_token():
+    """Terima refresh token baru dari server lain, simpan ke JSONBin."""
+    if not _check_api_key():
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+    data = request.json or {}
+
+    # Support 2 format: full token object atau hanya refresh_token
+    if "token" in data and isinstance(data["token"], dict):
+        # Format lengkap — langsung pakai
+        token_obj = data["token"]
+    elif "refresh_token" in data:
+        # Hanya refresh_token — gabungkan dengan token existing di JSONBin
+        existing = _pull_token_from_store()
+        if not existing:
+            return jsonify({
+                "success": False,
+                "error": "Tidak ada token existing di JSONBin. Kirim full token object."
+            }), 400
+        token_obj = dict(existing)
+        token_obj["refresh_token"] = data["refresh_token"]
+        # Hapus expiry supaya langsung di-refresh
+        token_obj.pop("expiry", None)
+        token_obj.pop("token", None)  # hapus access token lama
+    else:
+        return jsonify({
+            "success": False,
+            "error": "Kirim 'refresh_token' string atau 'token' object lengkap"
+        }), 400
+
+    # Validasi minimal
+    if not token_obj.get("refresh_token"):
+        return jsonify({"success": False, "error": "refresh_token kosong"}), 400
+
+    # Coba build credentials dan langsung refresh
+    try:
+        creds = Credentials.from_authorized_user_info(token_obj, SCOPES)
+        creds.refresh(Request())
+        _push_token_to_store(creds)
+        token_info = json.loads(creds.to_json())
+        return jsonify({
+            "success": True,
+            "message": "Token berhasil diperbarui dan disimpan ke JSONBin",
+            "expiry":         token_info.get("expiry"),
+            "has_refresh_token": bool(token_info.get("refresh_token")),
+        })
+    except Exception as e:
+        # Tetap simpan meski refresh gagal (mungkin token baru perlu waktu)
+        try:
+            import requests as rq
+            payload = {"token": token_obj, "saved_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+            rq.put(JSONBIN_URL, headers=_jb_headers(), json=payload, timeout=10)
+            return jsonify({
+                "success": True,
+                "message": "Token disimpan ke JSONBin (refresh gagal, akan dicoba saat upload)",
+                "warning": str(e),
+                "has_refresh_token": bool(token_obj.get("refresh_token")),
+            })
+        except Exception as e2:
+            return jsonify({"success": False, "error": f"Gagal simpan: {e2}"}), 500
+
+
+# ============================================================
+# ENDPOINT: INFO LENGKAP PROYEK
+# ============================================================
+# GET /api/v1/info-full
+# Header: X-API-Key: <api_key>
+
+@app.route('/api/v1/info-full', methods=['GET'])
+def api_v1_info_full():
+    """Info lengkap semua data proyek: token, antrian, riwayat, sistem."""
+    if not _check_api_key():
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+    now_ts  = time.time()
+    queue   = load_queue()
+    riwayat = load_riwayat()
+    about   = load_about()
+
+    # ── Token info ───────────────────────────────────────────
+    token_info = {}
+    try:
+        raw = _pull_token_from_store()
+        if raw:
+            creds = Credentials.from_authorized_user_info(raw, SCOPES)
+            token_info = {
+                "valid":             creds.valid,
+                "expired":           creds.expired,
+                "has_refresh_token": bool(creds.refresh_token),
+                "expiry":            raw.get("expiry"),
+                "scopes":            raw.get("scopes", []),
+                "saved_at":          None,  # diisi di bawah
+            }
+        else:
+            token_info = {"valid": False, "error": "Tidak ada token di JSONBin"}
+        # ambil saved_at dari JSONBin record
+        import requests as rq
+        jb_resp = rq.get(JSONBIN_URL + "/latest", headers=_jb_headers(), timeout=8)
+        if jb_resp.status_code == 200:
+            token_info["saved_at"] = jb_resp.json().get("record", {}).get("saved_at")
+    except Exception as e:
+        token_info["error"] = str(e)
+
+    # ── Queue stats ──────────────────────────────────────────
+    q_pending   = [q for q in queue if q.get("status") == "pending"]
+    q_waiting   = [q for q in queue if q.get("status") == "waiting"]
+    q_uploading = [q for q in queue if q.get("status") == "uploading"]
+    q_done      = [q for q in queue if q.get("status") == "done"]
+    q_failed    = [q for q in queue if q.get("status") == "failed"]
+
+    queue_detail = []
+    for q in queue:
+        remaining = None
+        if q.get("status") == "pending" and q.get("upload_at_ts"):
+            remaining = round(max(0, q["upload_at_ts"] - now_ts), 1)
+        queue_detail.append({
+            "id":               q.get("id"),
+            "title":            q.get("title", ""),
+            "status":           q.get("status"),
+            "upload_at":        q.get("upload_at"),
+            "remaining_seconds": remaining,
+            "added_at":         q.get("added_at"),
+            "source":           q.get("source"),
+            "github_path":      q.get("github_path"),
+            "video_id":         q.get("video_id"),
+            "link":             q.get("link"),
+            "error":            q.get("error"),
+            "file_hash":        q.get("file_hash"),
+        })
+
+    # ── Riwayat stats ────────────────────────────────────────
+    riwayat_recent = sorted(riwayat, key=lambda r: r.get("timestamp_unix", 0), reverse=True)[:10]
+    riwayat_summary = [{
+        "video_id":      r.get("video_id"),
+        "title":         r.get("title", ""),
+        "link":          r.get("link"),
+        "tanggal_upload": r.get("tanggal_upload"),
+        "thumbnail":     r.get("thumbnail"),
+    } for r in riwayat_recent]
+
+    # ── Sistem info ──────────────────────────────────────────
+    temp_files = []
+    try:
+        for f in os.listdir(TEMP_FOLDER):
+            fp = os.path.join(TEMP_FOLDER, f)
+            if os.path.isfile(fp):
+                temp_files.append({
+                    "name": f,
+                    "size_mb": round(os.path.getsize(fp) / 1024 / 1024, 2),
+                    "age_hours": round((now_ts - os.path.getmtime(fp)) / 3600, 1),
+                })
+    except: pass
+
+    music_files = []
+    try:
+        for f in os.listdir(MUSIC_FOLDER):
+            if os.path.splitext(f)[1].lower() in SUPPORTED_MUSIC:
+                music_files.append(f)
+    except: pass
+
+    return jsonify({
+        "success": True,
+        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+
+        # ── Token ────────────────────────────────────────────
+        "token": token_info,
+
+        # ── Antrian ──────────────────────────────────────────
+        "queue": {
+            "total":      len(queue),
+            "pending":    len(q_pending),
+            "waiting":    len(q_waiting),
+            "uploading":  len(q_uploading),
+            "done":       len(q_done),
+            "failed":     len(q_failed),
+            "items":      queue_detail,
+        },
+
+        # ── Riwayat ──────────────────────────────────────────
+        "riwayat": {
+            "total":   len(riwayat),
+            "recent":  riwayat_summary,
+        },
+
+        # ── About (default metadata) ─────────────────────────
+        "about": about,
+
+        # ── Konfigurasi server ───────────────────────────────
+        "config": {
+            "github_repo":        GITHUB_REPO,
+            "jsonbin_configured": bool(JSONBIN_BIN_ID and JSONBIN_API_KEY),
+            "google_available":   GOOGLE_AVAILABLE,
+            "api_key_set":        bool(API_KEY),
+            "ffmpeg":             str(get_ffmpeg()) if get_ffmpeg() else None,
+        },
+
+        # ── Temp files ───────────────────────────────────────
+        "temp": {
+            "total_files": len(temp_files),
+            "files":       temp_files,
+        },
+
+        # ── Musik ────────────────────────────────────────────
+        "music": {
+            "total": len(music_files),
+            "files": music_files,
+        },
+    })
