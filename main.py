@@ -326,6 +326,24 @@ def gh_delete_video(repo_path):
 
 _ram_riwayat: list = None
 _ram_queue:   list = None
+_ram_settings: dict = None
+
+def load_settings() -> dict:
+    global _ram_settings
+    remote = gh_load("settings", None)
+    if remote is not None:
+        _ram_settings = remote
+        return remote
+    return _ram_settings if _ram_settings is not None else {}
+
+def save_settings(data: dict):
+    global _ram_settings
+    _ram_settings = data
+    gh_save("settings", data, message="[settings] update")
+
+def is_paused() -> bool:
+    s = load_settings()
+    return bool(s.get("paused", False))
 
 def load_riwayat() -> list:
     global _ram_riwayat
@@ -953,9 +971,9 @@ def queue_worker():
             playlist_id=it.get("playlist_id", about.get("playlist", ""))
         )
 
+        # Video di GitHub dibiarkan tetap ada setelah upload YouTube berhasil
         if vid_id and github_path:
-            print(f"[QUEUE] Berhasil upload YouTube, hapus dari GitHub: {github_path}")
-            gh_delete_video(github_path)
+            print(f"[QUEUE] Upload YouTube berhasil, video GitHub tetap disimpan: {github_path}")
 
         cleanup_temp(filename)
 
@@ -978,6 +996,20 @@ def queue_worker():
 
     while True:
         try:
+            # Jika mode pause aktif, geser semua upload_at_ts ke depan (freeze timer)
+            if is_paused():
+                with queue_lock:
+                    queue = load_queue()
+                    changed = False
+                    for q in queue:
+                        if q.get("status") == "pending" and q.get("upload_at_ts"):
+                            q["upload_at_ts"] = time.time() + max(1.0, float(q.get("remaining_seconds") or 5))
+                            changed = True
+                    if changed:
+                        save_queue(queue)
+                time.sleep(1)
+                continue
+
             with queue_lock:
                 queue = load_queue()
                 uploading = [q for q in queue if q.get("status") == "uploading"]
@@ -1389,6 +1421,71 @@ def delete_queue_item(item_id):
         save_queue(queue, force_gh=True)
         cleanup_temp(found.get("filename", ""))
     return jsonify({"status": "ok"})
+
+@app.route('/api/settings')
+def get_settings():
+    return jsonify(load_settings())
+
+@app.route('/api/pause-toggle', methods=['POST'])
+def pause_toggle():
+    s = load_settings()
+    new_paused = not bool(s.get("paused", False))
+    s["paused"] = new_paused
+    s["paused_at"] = time.strftime("%Y-%m-%d %H:%M:%S") if new_paused else None
+    save_settings(s)
+    return jsonify({"status": "ok", "paused": new_paused})
+
+@app.route('/api/delete-all', methods=['POST'])
+def delete_all():
+    """Hapus semua antrian + semua file di GitHub folder video/ dan data/ (kecuali settings.json)."""
+    import requests as r
+
+    # 1. Kosongkan antrian di RAM
+    with queue_lock:
+        save_queue([], force_gh=True)
+
+    # Helper hapus satu file dari GitHub
+    def _delete_gh_file(path, sha):
+        try:
+            payload = {"message": f"[delete-all] {os.path.basename(path)}", "sha": sha}
+            resp = r.delete(f"{GITHUB_API}/repos/{GITHUB_REPO}/contents/{path}",
+                            headers=_gh_headers(), json=payload, timeout=30)
+            return resp.status_code in (200, 204)
+        except Exception as e:
+            print(f"[DELETE ALL] error hapus {path}: {e}")
+            return False
+
+    # Helper list folder GitHub
+    def _list_folder(folder):
+        try:
+            resp = r.get(f"{GITHUB_API}/repos/{GITHUB_REPO}/contents/{folder}",
+                         headers=_gh_headers(), timeout=15)
+            if resp.status_code == 200:
+                items = resp.json()
+                if isinstance(items, list):
+                    return [(item["path"], item["sha"]) for item in items if item["type"] == "file"]
+        except Exception as e:
+            print(f"[DELETE ALL] error list {folder}: {e}")
+        return []
+
+    deleted = []
+    errors  = []
+
+    # 2. Hapus semua file di folder video/
+    for path, sha in _list_folder("video"):
+        ok = _delete_gh_file(path, sha)
+        (deleted if ok else errors).append(path)
+        _sha_cache.pop(path, None)
+
+    # 3. Hapus semua file di folder data/ KECUALI settings.json
+    for path, sha in _list_folder("data"):
+        if os.path.basename(path) == "settings.json":
+            continue
+        ok = _delete_gh_file(path, sha)
+        (deleted if ok else errors).append(path)
+        _sha_cache.pop(path, None)
+
+    return jsonify({"status": "ok", "deleted": deleted, "errors": errors})
 
 @app.route('/api/queue/<item_id>/retry', methods=['POST'])
 def retry_queue_item(item_id):
