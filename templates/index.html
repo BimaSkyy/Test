@@ -886,6 +886,29 @@
     <!-- Queue -->
     <div class="divider"></div>
     <div class="section-label">Antrian Upload</div>
+
+    <!-- Tombol kontrol antrian -->
+    <div style="display:flex; gap:8px; margin-bottom:10px;">
+      <div style="flex:1;">
+        <button class="btn btn-secondary btn-full" id="pauseAllBtn" onclick="togglePause()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+          Pause All
+        </button>
+        <div style="font-size:11px; color: var(--gray-400); margin-top:4px; line-height:1.4;">
+          Hentikan sementara semua countdown. Timer tidak akan berjalan sampai di-resume.
+        </div>
+      </div>
+      <div style="flex:1;">
+        <button class="btn btn-danger btn-full" id="deleteAllBtn" onclick="deleteAllQueue()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+          Delete All
+        </button>
+        <div style="font-size:11px; color: var(--gray-400); margin-top:4px; line-height:1.4;">
+          Hapus semua antrian &amp; file video di GitHub. Data setting tidak ikut terhapus.
+        </div>
+      </div>
+    </div>
+
     <div id="queueList" class="queue-list">
       <div class="empty-state">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg>
@@ -1276,6 +1299,65 @@ document.getElementById('saveScheduleBtn').addEventListener('click', async () =>
 // QUEUE DISPLAY
 // ============================================================
 let queueData = [];
+let isPaused = false;
+
+async function loadPauseState() {
+  try {
+    const r = await fetch('/api/settings');
+    const s = await r.json();
+    isPaused = !!s.paused;
+    updatePauseBtn();
+  } catch(e) {}
+}
+
+function updatePauseBtn() {
+  const btn = document.getElementById('pauseAllBtn');
+  if (!btn) return;
+  if (isPaused) {
+    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px"><polygon points="5 3 19 12 5 21 5 3"/></svg> Resume All`;
+    btn.style.background = '#fef3c7';
+    btn.style.borderColor = '#f59e0b';
+    btn.style.color = '#92400e';
+  } else {
+    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause All`;
+    btn.style.background = '';
+    btn.style.borderColor = '';
+    btn.style.color = '';
+  }
+}
+
+async function togglePause() {
+  const btn = document.getElementById('pauseAllBtn');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/pause-toggle', { method: 'POST' });
+    const d = await r.json();
+    isPaused = d.paused;
+    updatePauseBtn();
+  } catch(e) {
+    alert('Gagal toggle pause: ' + e);
+  }
+  btn.disabled = false;
+}
+
+async function deleteAllQueue() {
+  if (!confirm('Hapus SEMUA antrian dan file video di GitHub?\n\nSettings tidak akan ikut terhapus.\n\nLanjutkan?')) return;
+  const btn = document.getElementById('deleteAllBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Menghapus...';
+  try {
+    const r = await fetch('/api/delete-all', { method: 'POST' });
+    const d = await r.json();
+    await loadQueue();
+    const n = d.deleted ? d.deleted.length : 0;
+    const e = d.errors ? d.errors.length : 0;
+    alert(`✅ Selesai!\n${n} file dihapus dari GitHub${e > 0 ? `\n⚠️ ${e} file gagal dihapus` : ''}`);
+  } catch(e) {
+    alert('Gagal delete all: ' + e);
+  }
+  btn.disabled = false;
+  btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg> Delete All`;
+}
 
 async function loadQueue() {
   try {
@@ -1433,7 +1515,9 @@ function tickCountdown() {
 // Poll queue every 5s, tick every 1s
 setInterval(tickCountdown, 1000);
 setInterval(loadQueue, 5000);
+setInterval(loadPauseState, 10000);
 loadQueue();
+loadPauseState();
 
 // ============================================================
 // VIDEO MAKER
@@ -2204,8 +2288,14 @@ textarea.inp { resize: vertical; }
     <p class="card-sub">Ubah atau tambahkan deskripsi channel YouTube kamu</p>
     <div style="margin-top:12px;display:flex;flex-direction:column;gap:10px;">
       <div>
-        <label class="form-label">Deskripsi Baru</label>
-        <textarea id="chDesc" class="inp" rows="5" placeholder="Masukkan deskripsi channel kamu..."></textarea>
+        <label class="form-label" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>Deskripsi Baru</span>
+          <span id="chDescCounter" style="font-size:11px;font-weight:500;color:var(--gray-400);">0 / 1000 karakter</span>
+        </label>
+        <textarea id="chDesc" class="inp" rows="5" placeholder="Masukkan deskripsi channel kamu..." oninput="chDescCount()"></textarea>
+        <div id="chDescWarning" style="display:none;font-size:12px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;margin-top:4px;">
+          ⚠️ Melebihi 1000 karakter — deskripsi akan dipotong otomatis.
+        </div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;">
         <button class="btn btn-outline" onclick="chLoadDesc()">📥 Load Deskripsi Sekarang</button>
@@ -2224,8 +2314,14 @@ textarea.inp { resize: vertical; }
     <p class="card-sub">Atur kata kunci channel untuk membantu algoritma YouTube</p>
     <div style="margin-top:12px;display:flex;flex-direction:column;gap:10px;">
       <div>
-        <label class="form-label">Tags (pisah dengan koma)</label>
+        <label class="form-label" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>Tags (pisah dengan koma)</span>
+          <span id="chTagsCounter" style="font-size:11px;font-weight:500;color:var(--gray-400);">0 / 500 karakter</span>
+        </label>
         <textarea id="chTags" class="inp" rows="3" placeholder="gaming, shorts, viral, trending, ..."></textarea>
+        <div id="chTagsWarning" style="display:none;font-size:12px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;margin-top:4px;">
+          ⚠️ Melebihi 500 karakter! Tag yang melebihi batas akan dipotong otomatis oleh YouTube. Hapus beberapa tag agar semua tersimpan.
+        </div>
       </div>
       <div id="chTagsPreview" style="display:flex;flex-wrap:wrap;gap:4px;min-height:24px;"></div>
       <div style="display:flex;gap:8px;align-items:center;">
@@ -2367,6 +2463,19 @@ textarea.inp { resize: vertical; }
 ═══════════════════════════════ */
 
 // ── Deskripsi Channel ──
+function chDescCount() {
+  const len = document.getElementById('chDesc').value.length;
+  const counter = document.getElementById('chDescCounter');
+  const warning = document.getElementById('chDescWarning');
+  counter.textContent = len + ' / 1000 karakter';
+  if (len > 1000) {
+    counter.style.color = '#dc2626';
+    warning.style.display = 'block';
+  } else {
+    counter.style.color = len > 800 ? '#d97706' : 'var(--gray-400)';
+    warning.style.display = 'none';
+  }
+}
 async function chLoadDesc() {
   const st = document.getElementById('chDescStatus');
   st.textContent = '⏳ Memuat...';
@@ -2375,6 +2484,7 @@ async function chLoadDesc() {
     const d = await r.json();
     if (d.error) { st.textContent = '❌ ' + d.error; return; }
     document.getElementById('chDesc').value = d.description || '';
+    chDescCount();
     st.innerHTML = '<span style="color:var(--accent)">✅ Deskripsi berhasil dimuat</span>';
   } catch(e) { st.textContent = '❌ Error: ' + e.message; }
 }
@@ -2400,7 +2510,33 @@ function chRenderTagsPreview() {
   const raw = document.getElementById('chTags').value;
   const tags = raw.split(',').map(t=>t.trim()).filter(Boolean);
   const preview = document.getElementById('chTagsPreview');
-  preview.innerHTML = tags.map(t=>`<span class="ev-tag">${t}</span>`).join('');
+
+  // Build keyword string like backend does
+  const kwStr = tags.join(' ');
+  const charCount = kwStr.length;
+  const counter = document.getElementById('chTagsCounter');
+  const warning = document.getElementById('chTagsWarning');
+
+  counter.textContent = charCount + ' / 500 karakter';
+  if (charCount > 500) {
+    counter.style.color = '#dc2626';
+    warning.style.display = 'block';
+    // Show which tags will be cut
+    let total = 0, okCount = 0;
+    for (const t of tags) {
+      const needed = t.length + (okCount > 0 ? 1 : 0);
+      if (total + needed > 500) break;
+      total += needed;
+      okCount++;
+    }
+    preview.innerHTML = tags.map((t, i) =>
+      `<span class="ev-tag" style="${i >= okCount ? 'opacity:0.35;text-decoration:line-through;' : ''}">${t}</span>`
+    ).join('');
+  } else {
+    counter.style.color = charCount > 400 ? '#d97706' : 'var(--gray-400)';
+    warning.style.display = 'none';
+    preview.innerHTML = tags.map(t=>`<span class="ev-tag">${t}</span>`).join('');
+  }
 }
 document.getElementById('chTags').addEventListener('input', chRenderTagsPreview);
 
@@ -2430,7 +2566,12 @@ async function chSaveTags() {
     });
     const d = await r.json();
     if (d.error) { st.textContent = '❌ ' + d.error; return; }
-    st.innerHTML = `<span style="color:var(--accent)">✅ ${tags.length} tag berhasil disimpan!</span>`;
+    if (d.keywords_truncated) {
+      const savedLen = d.keywords_length;
+      st.innerHTML = `<span style="color:#d97706;">⚠️ Tersimpan tapi dipotong — hanya ${savedLen} karakter pertama yang masuk (limit YouTube 500 karakter). Kurangi jumlah tag agar semua tersimpan.</span>`;
+    } else {
+      st.innerHTML = `<span style="color:var(--accent)">✅ ${tags.length} tag berhasil disimpan!</span>`;
+    }
   } catch(e) { st.textContent = '❌ Error: ' + e.message; }
 }
 
