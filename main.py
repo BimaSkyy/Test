@@ -461,6 +461,9 @@ JSONBIN_BIN_ID  = os.environ.get("JSONBIN_BIN_ID", "")
 JSONBIN_API_KEY = os.environ.get("JSONBIN_API_KEY", "")
 JSONBIN_URL     = f"https://api.jsonbin.io/v3/b/{JSONBIN_BIN_ID}"
 
+# ── In-memory token cache (primary storage, survives JSONBin outage) ──
+_token_memory_cache: dict = {}
+
 def _jb_headers():
     return {
         "X-Master-Key": JSONBIN_API_KEY,
@@ -468,50 +471,82 @@ def _jb_headers():
     }
 
 def _push_token_to_store(creds):
-    """Simpan token ke JSONBin."""
-    if not REQUESTS_AVAILABLE or not JSONBIN_BIN_ID or not JSONBIN_API_KEY:
-        print("[AUTH] JSONBin belum dikonfigurasi, skip simpan token.")
-        return
+    """Simpan token ke memory cache dulu, lalu JSONBin (async, best-effort)."""
+    global _token_memory_cache
     try:
-        import requests as r
         token_dict = json.loads(creds.to_json())
+        # ── Prioritas 1: simpan ke memory DULU — tidak pernah gagal ──
+        _token_memory_cache = token_dict
+        print("[AUTH] Token disimpan ke memory cache")
+    except Exception as e:
+        print(f"[AUTH] Gagal simpan ke memory: {e}")
+
+    # ── Prioritas 2: coba simpan ke JSONBin (retry 2x, background) ──
+    if not REQUESTS_AVAILABLE or not JSONBIN_BIN_ID or not JSONBIN_API_KEY:
+        print("[AUTH] JSONBin belum dikonfigurasi, skip simpan ke JSONBin.")
+        return
+
+    def _do_push():
+        import requests as r
         payload = {
             "token": token_dict,
             "saved_at": time.strftime("%Y-%m-%d %H:%M:%S")
         }
-        resp = r.put(JSONBIN_URL, headers=_jb_headers(), json=payload, timeout=10)
-        if resp.status_code == 200:
-            print("[AUTH] Token berhasil disimpan ke JSONBin")
-        else:
-            print(f"[AUTH] Gagal simpan token ke JSONBin: {resp.status_code} {resp.text[:200]}")
-    except Exception as e:
-        print(f"[AUTH] Push token error: {e}")
+        for attempt in range(1, 3):
+            try:
+                resp = r.put(JSONBIN_URL, headers=_jb_headers(), json=payload, timeout=20)
+                if resp.status_code == 200:
+                    print(f"[AUTH] Token berhasil disimpan ke JSONBin (attempt {attempt})")
+                    return
+                else:
+                    print(f"[AUTH] JSONBin push attempt {attempt} gagal: {resp.status_code}")
+            except Exception as e:
+                print(f"[AUTH] JSONBin push attempt {attempt} error: {e}")
+            time.sleep(3)
+        print("[AUTH] JSONBin push gagal semua attempt, token aman di memory")
+
+    threading.Thread(target=_do_push, daemon=True).start()
 
 def _pull_token_from_store():
-    """Ambil token dari JSONBin."""
+    """Ambil token: memory cache dulu, lalu JSONBin."""
+    global _token_memory_cache
+
+    # ── Prioritas 1: memory cache (instan, tidak kena network) ──
+    if _token_memory_cache and isinstance(_token_memory_cache, dict) and _token_memory_cache.get("token"):
+        print("[AUTH] Token diambil dari memory cache")
+        return _token_memory_cache
+
+    # ── Prioritas 2: JSONBin ──
     if not REQUESTS_AVAILABLE or not JSONBIN_BIN_ID or not JSONBIN_API_KEY:
         return None
-    try:
-        import requests as r
-        resp = r.get(JSONBIN_URL + "/latest", headers=_jb_headers(), timeout=10)
-        if resp.status_code == 200:
-            record = resp.json().get("record", {})
-            token = record.get("token")
-            if token and isinstance(token, dict) and token.get("token"):
-                return token
-        return None
-    except Exception as e:
-        print(f"[AUTH] Pull token error: {e}")
-        return None
+    for attempt in range(1, 3):
+        try:
+            import requests as r
+            resp = r.get(JSONBIN_URL + "/latest", headers=_jb_headers(), timeout=20)
+            if resp.status_code == 200:
+                record = resp.json().get("record", {})
+                token = record.get("token")
+                if token and isinstance(token, dict) and token.get("token"):
+                    # Simpan ke memory supaya request berikutnya tidak perlu ke JSONBin
+                    _token_memory_cache = token
+                    print(f"[AUTH] Token diambil dari JSONBin (attempt {attempt}), di-cache ke memory")
+                    return token
+            return None
+        except Exception as e:
+            print(f"[AUTH] Pull token JSONBin attempt {attempt} error: {e}")
+            if attempt < 2:
+                time.sleep(3)
+    return None
 
 def load_credentials():
     """
-    Ambil credentials YouTube dari JSONBin.
-    Auto-refresh jika expired, simpan balik ke JSONBin.
+    Ambil credentials YouTube.
+    Prioritas: memory cache -> JSONBin -> env var -> file lokal.
+    Auto-refresh jika expired, simpan balik ke store.
     """
     if not GOOGLE_AVAILABLE: return None
 
-    # ── Prioritas 1: JSONBin ──────────────────────────────────
+    # -- Prioritas 1: memory cache + JSONBin (via _pull_token_from_store) --
     token_data = _pull_token_from_store()
 
     # ── Prioritas 2: env var YOUTUBE_TOKEN_JSON (legacy) ──────
