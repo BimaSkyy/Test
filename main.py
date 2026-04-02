@@ -1047,6 +1047,22 @@ def queue_worker():
 
             with queue_lock:
                 queue = load_queue()
+                now_ts = time.time()
+                # Reset item yang stuck di uploading lebih dari 30 menit
+                stuck_found = False
+                for q in queue:
+                    if q.get("status") == "uploading":
+                        started = float(q.get("uploading_since") or 0)
+                        if started == 0 or (now_ts - started) > 1800:
+                            print(f"[QUEUE WORKER] Item {q.get('id')} stuck uploading, reset ke pending")
+                            q["status"] = "pending"
+                            q["uploading_since"] = None
+                            q["upload_at_ts"] = now_ts + 10
+                            q["upload_at"] = __import__("datetime").datetime.fromtimestamp(now_ts + 10).strftime("%Y-%m-%d %H:%M:%S")
+                            stuck_found = True
+                if stuck_found:
+                    save_queue(queue, force_gh=True)
+
                 uploading = [q for q in queue if q.get("status") == "uploading"]
                 if not uploading:
                     pending = [q for q in queue if q.get("status") == "pending"]
@@ -1069,6 +1085,7 @@ def queue_worker():
                                 if q.get("id") == item["id"]:
                                     q["status"]            = "uploading"
                                     q["remaining_seconds"] = 0
+                                    q["uploading_since"]   = now_ts
                             save_queue(queue, force_gh=True)
                             item_copy = dict(item)
                             threading.Thread(target=do_upload, args=(item_copy,), daemon=True).start()
