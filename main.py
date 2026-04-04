@@ -2397,6 +2397,200 @@ def api_v1_submit():
     }), 202
 
 
+@app.route('/api/v1/submit-github', methods=['POST'])
+def api_v1_submit_github():
+    """
+    Endpoint baru: Terima metadata saja (tanpa file video).
+    Video sudah diupload ke GitHub oleh app.py (client).
+    Koyeb hanya verifikasi file ada di GitHub lalu masukkan ke antrian.
+
+    JSON body:
+    {
+        "github_path":   "video/project-1_abc123.mp4",   // path di repo GitHub
+        "file_hash":     "abc123...",                     // sha256 hash (opsional, untuk deteksi duplikat)
+        "title":         "...",
+        "description":   "...",
+        "category":      "22",
+        "tags":          "shorts,viral,...",
+        "playlist_id":   "PLxxx...",
+        "timer_value":   15,
+        "timer_unit":    "hours",
+        "filename":      "project-1.mp4",
+        "thumbnail_github_path": "thumbnails/thumb_abc.jpg"  // opsional
+    }
+    """
+    # === 1. Auth ===
+    if not _check_api_key():
+        return jsonify({"success": False, "error": "Unauthorized. API key salah atau tidak ada."}), 401
+
+    # === 2. Ambil data JSON ===
+    data = request.get_json(silent=True) or {}
+
+    github_path     = data.get("github_path", "").strip()
+    file_hash       = data.get("file_hash", "").strip()
+    title           = data.get("title", "").strip()
+    description     = data.get("description", "").strip()
+    category        = data.get("category", "").strip()
+    tags_raw        = data.get("tags", "")
+    playlist_id     = data.get("playlist_id", "").strip()
+    timer_value     = data.get("timer_value", 15)
+    timer_unit      = data.get("timer_unit", "hours").lower()
+    filename        = data.get("filename", os.path.basename(github_path)).strip()
+    thumbnail_github_path = data.get("thumbnail_github_path", "").strip()
+
+    # === 3. Validasi input ===
+    if not github_path:
+        return jsonify({"success": False, "error": "Field 'github_path' wajib diisi."}), 400
+
+    try:
+        timer_value = float(timer_value)
+    except (ValueError, TypeError):
+        return jsonify({"success": False, "error": f"timer_value tidak valid: {timer_value}"}), 400
+
+    if timer_unit not in ('hours', 'minutes', 'seconds'):
+        return jsonify({"success": False, "error": "timer_unit harus 'hours', 'minutes', atau 'seconds'"}), 400
+
+    timer_seconds = timer_value * (3600 if timer_unit == 'hours' else 60 if timer_unit == 'minutes' else 1)
+
+    tags = [t.strip() for t in tags_raw.split(',') if t.strip()] if isinstance(tags_raw, str) else (tags_raw if isinstance(tags_raw, list) else [])
+
+    # === 4. Cek duplikat (hash) ===
+    if file_hash:
+        is_dup, dup_vid_id, dup_reason = check_duplicate(file_hash)
+        if is_dup:
+            resp = {
+                "success": True,
+                "duplicate": True,
+                "message": dup_reason,
+            }
+            if dup_vid_id:
+                resp["youtube"] = {
+                    "video_id": dup_vid_id,
+                    "link": f"https://youtu.be/{dup_vid_id}",
+                }
+            return jsonify(resp)
+
+    # === 5. Verifikasi file sudah ada di GitHub ===
+    print(f"[submit-github] Verifikasi GitHub: {github_path}")
+    verified, verify_reason = gh_verify_video(github_path)
+    if not verified:
+        return jsonify({
+            "success": False,
+            "error": f"File tidak ditemukan di GitHub: {verify_reason}",
+            "github_path": github_path,
+            "hint": "Pastikan file sudah terupload ke GitHub sebelum submit ke API ini."
+        }), 404
+
+    # === 6. Cek antrian: pastikan tidak ada yang pakai github_path yang sama ===
+    with queue_lock:
+        queue = load_queue()
+        conflict = next(
+            (q for q in queue
+             if q.get("github_path") == github_path
+             and q.get("status") in ("pending", "waiting", "uploading")),
+            None
+        )
+        if conflict:
+            return jsonify({
+                "success": False,
+                "error": "Video ini sudah ada di antrian aktif.",
+                "queue_id": conflict["id"],
+                "queue_status": conflict["status"],
+            }), 409
+
+    # === 7. Load about default & override ===
+    about = load_about()
+    final_title       = title or about.get('title', '')
+    final_description = description or about.get('description', '')
+    final_tags        = tags or about.get('tags', [])
+    final_category    = category or about.get('category', '20')
+    final_playlist_id = playlist_id or about.get('playlist', '')
+
+    # === 8. Masukkan ke antrian ===
+    now_ts = time.time()
+    with queue_lock:
+        queue    = load_queue()
+        has_busy = any(q.get("status") in ("pending", "uploading", "waiting") for q in queue)
+
+        if has_busy:
+            status       = "waiting"
+            upload_at_ts = None
+            upload_at    = "(menunggu giliran)"
+        else:
+            status       = "pending"
+            upload_at_ts = now_ts + timer_seconds
+            upload_at    = datetime.fromtimestamp(upload_at_ts).strftime("%Y-%m-%d %H:%M:%S")
+
+        item = {
+            "id":                    str(uuid.uuid4()),
+            "filename":              filename,
+            "file_hash":             file_hash,
+            "github_path":           github_path,
+            "thumbnail_github_path": thumbnail_github_path,
+            "title":                 final_title,
+            "description":           final_description,
+            "tags":                  final_tags,
+            "category":              final_category,
+            "playlist_id":           final_playlist_id,
+            "source":                "api_v1_github",
+            "added_at":              time.strftime("%Y-%m-%d %H:%M:%S"),
+            "added_at_ts":           now_ts,
+            "timeout_seconds":       timer_seconds,
+            "timeout_value":         timer_value,
+            "timeout_unit":          timer_unit,
+            "upload_at_ts":          upload_at_ts,
+            "upload_at":             upload_at,
+            "status":                status,
+            "remaining_seconds":     timer_seconds if status == "pending" else None,
+        }
+        queue.append(item)
+        save_queue(queue, force_gh=True)
+
+    print(f"[submit-github] OK: {github_path} → antrian {item['id']} [{status}]")
+
+    # === 9. Respons ===
+    if timer_unit == 'hours':
+        timer_str = f"{timer_value} jam"
+    elif timer_unit == 'minutes':
+        timer_str = f"{timer_value} menit"
+    else:
+        timer_str = f"{timer_value} detik"
+
+    github_url     = f"https://github.com/{GITHUB_REPO}/blob/main/{github_path}"
+    github_raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/{github_path}"
+
+    return jsonify({
+        "success":      True,
+        "duplicate":    False,
+        "message":      f"Video diterima dari GitHub dan masuk antrian. Upload dalam {timer_str}.",
+        "queue_id":     item["id"],
+        "queue_status": status,
+        "github": {
+            "path":    github_path,
+            "url":     github_url,
+            "raw_url": github_raw_url,
+            "repo":    GITHUB_REPO,
+            "verified": True,
+        },
+        "timer": {
+            "value":     timer_value,
+            "unit":      timer_unit,
+            "seconds":   timer_seconds,
+            "upload_at": upload_at,
+            "human":     timer_str,
+        },
+        "metadata": {
+            "title":       final_title,
+            "description": final_description,
+            "tags":        final_tags,
+            "category":    final_category,
+            "playlist_id": final_playlist_id,
+            "thumbnail":   f"github:{thumbnail_github_path}" if thumbnail_github_path else "default",
+        },
+        "check_status_url": f"/api/v1/status/{item['id']}",
+    }), 202
+
+
 @app.route('/api/v1/status/<queue_id>', methods=['GET'])
 def api_v1_status(queue_id):
     """Cek status antrian berdasarkan queue_id."""
