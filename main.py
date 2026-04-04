@@ -419,6 +419,134 @@ def sync_worker():
             print(f"[SYNC] error: {e}")
 
 # ============================================================
+# HOURLY GITHUB CLEANUP WORKER
+# Setiap 1 jam:
+# 1. Cek file di antrian pending/waiting → pastikan ada di GitHub
+# 2. Hapus file video di GitHub yang tidak ada di antrian aktif
+# ============================================================
+
+def _gh_list_folder_files(folder):
+    """List semua file di folder GitHub, return list of {name, sha, path}."""
+    if not REQUESTS_AVAILABLE:
+        return []
+    try:
+        import requests as r
+        url  = f"{GITHUB_API}/repos/{GITHUB_REPO}/contents/{folder}"
+        resp = r.get(url, headers=_gh_headers(), timeout=20)
+        if resp.status_code == 200:
+            items = resp.json()
+            if isinstance(items, list):
+                return [
+                    {"name": i["name"], "sha": i["sha"], "path": i["path"]}
+                    for i in items if i.get("type") == "file"
+                ]
+    except Exception as e:
+        print(f"[CLEANUP] list folder error {folder}: {e}")
+    return []
+
+def _gh_delete_file(repo_path, sha, message="[cleanup] hapus file tidak terpakai"):
+    if not REQUESTS_AVAILABLE:
+        return False
+    try:
+        import requests as r
+        payload = {"message": message, "sha": sha}
+        resp = r.delete(
+            f"{GITHUB_API}/repos/{GITHUB_REPO}/contents/{repo_path}",
+            headers=_gh_headers(), json=payload, timeout=30
+        )
+        if resp.status_code in (200, 204):
+            _sha_cache.pop(repo_path, None)
+            return True
+        print(f"[CLEANUP] delete {repo_path} → {resp.status_code}")
+        return False
+    except Exception as e:
+        print(f"[CLEANUP] delete error {repo_path}: {e}")
+        return False
+
+def github_cleanup_worker():
+    """
+    Setiap 1 jam:
+    - Ambil antrian aktif (pending + waiting)
+    - Kumpulkan semua github_path yang masih diperlukan
+    - List semua file di folder video/ di GitHub
+    - Hapus file yang tidak ada di antrian aktif
+    - Cek juga bahwa file antrian aktif benar-benar ada di GitHub
+    """
+    # Tunda 5 menit pertama supaya server sudah fully up
+    time.sleep(300)
+
+    while True:
+        try:
+            print("[CLEANUP] Memulai pengecekan GitHub hourly...")
+
+            queue = load_queue()
+
+            # Kumpulkan path yang MASIH diperlukan (pending & waiting)
+            needed_paths = set()
+            for item in queue:
+                if item.get("status") in ("pending", "waiting"):
+                    gp = item.get("github_path", "")
+                    if gp:
+                        needed_paths.add(gp)
+                    # Juga jaga thumbnail jika ada
+                    tp = item.get("thumbnail_github_path", "")
+                    if tp:
+                        needed_paths.add(tp)
+
+            print(f"[CLEANUP] File diperlukan di antrian: {len(needed_paths)}")
+
+            # ── 1. Verifikasi file antrian masih ada di GitHub ──
+            changed = False
+            for item in queue:
+                if item.get("status") in ("pending", "waiting") and item.get("github_path"):
+                    verified, reason = gh_verify_video(item["github_path"])
+                    if not verified:
+                        print(f"[CLEANUP] File hilang dari GitHub: {item['github_path']} → tandai failed")
+                        item["status"] = "failed"
+                        item["error"]  = f"[hourly check] File tidak ada di GitHub: {reason}"
+                        changed = True
+
+            if changed:
+                with queue_lock:
+                    activate_next_waiting(queue)
+                    save_queue(queue, force_gh=True)
+                print(f"[CLEANUP] Queue diupdate setelah cek file hilang")
+
+            # ── 2. Hapus file video GitHub yang tidak diperlukan ──
+            video_files = _gh_list_folder_files("video")
+            deleted_count = 0
+            for vf in video_files:
+                repo_path = vf["path"]
+                if repo_path not in needed_paths:
+                    print(f"[CLEANUP] Hapus file tidak terpakai: {repo_path}")
+                    ok = _gh_delete_file(repo_path, vf["sha"],
+                                         f"[hourly-cleanup] hapus video tidak aktif: {vf['name']}")
+                    if ok:
+                        deleted_count += 1
+                        print(f"[CLEANUP] ✓ Dihapus: {repo_path}")
+                    time.sleep(1)  # Jaga rate limit GitHub API
+
+            # ── 3. Hapus thumbnail GitHub yang tidak diperlukan ──
+            thumb_files = _gh_list_folder_files("thumbnails")
+            for tf in thumb_files:
+                repo_path = tf["path"]
+                if repo_path not in needed_paths:
+                    print(f"[CLEANUP] Hapus thumbnail tidak terpakai: {repo_path}")
+                    ok = _gh_delete_file(repo_path, tf["sha"],
+                                         f"[hourly-cleanup] hapus thumbnail tidak aktif: {tf['name']}")
+                    if ok:
+                        deleted_count += 1
+                    time.sleep(1)
+
+            print(f"[CLEANUP] Selesai. Total dihapus: {deleted_count} file | Diperlukan: {len(needed_paths)} file")
+
+        except Exception as e:
+            print(f"[CLEANUP] Error: {e}")
+
+        # Tunggu 1 jam
+        time.sleep(3600)
+
+# ============================================================
 # ABOUT
 # ============================================================
 
@@ -811,7 +939,22 @@ def add_to_playlist(youtube, video_id, playlist_id):
         print(f"[PLAYLIST] Error: {e}")
         return False, str(e)
 
-def do_youtube_upload(file_path, title, description, tags, category, file_hash, filename, playlist_id=None):
+def set_thumbnail(youtube, video_id, thumbnail_path):
+    """Upload custom thumbnail ke YouTube video."""
+    if not thumbnail_path or not os.path.exists(thumbnail_path):
+        return False, "File thumbnail tidak ditemukan"
+    try:
+        ext = os.path.splitext(thumbnail_path)[1].lower()
+        mime = "image/jpeg" if ext in ('.jpg', '.jpeg') else "image/png" if ext == '.png' else "image/jpeg"
+        media_thumb = MediaFileUpload(thumbnail_path, mimetype=mime)
+        youtube.thumbnails().set(videoId=video_id, media_body=media_thumb).execute()
+        print(f"[THUMBNAIL] Set OK untuk video {video_id}")
+        return True, None
+    except Exception as e:
+        print(f"[THUMBNAIL] Gagal: {e}")
+        return False, str(e)
+
+def do_youtube_upload(file_path, title, description, tags, category, file_hash, filename, playlist_id=None, thumbnail_path=None):
     if not GOOGLE_AVAILABLE: return None, "Google API tidak tersedia"
     creds = load_credentials()
     if not creds: return None, "Belum autentikasi YouTube"
@@ -846,6 +989,13 @@ def do_youtube_upload(file_path, title, description, tags, category, file_hash, 
         video_id = resp["id"]
         print(f"[YT] Uploaded OK: {video_id} — {title}")
 
+        # Set custom thumbnail jika ada
+        thumbnail_error = None
+        if thumbnail_path:
+            ok_th, th_err = set_thumbnail(youtube, video_id, thumbnail_path)
+            if not ok_th:
+                thumbnail_error = th_err
+
         # Tambah ke playlist jika ada
         playlist_error = None
         if playlist_id:
@@ -872,6 +1022,7 @@ def do_youtube_upload(file_path, title, description, tags, category, file_hash, 
             "source":          "scheduled",
             "playlist_id":     playlist_id or "",
             "playlist_error":  playlist_error or "",
+            "thumbnail_error": thumbnail_error or "",
         }
         riwayat.append(entry)
         save_riwayat(riwayat, force_gh=True)
@@ -996,6 +1147,21 @@ def queue_worker():
             return
 
         about = load_about()
+
+        # Resolve thumbnail path: dari antrian atau default thumbnail/thumbnail.jpg
+        thumbnail_path = None
+        thumbnail_gh = it.get("thumbnail_github_path", "")
+        if thumbnail_gh:
+            # Download thumbnail dari GitHub jika ada
+            thumb_fname = f"thumb_{it.get('id','')[:8]}.jpg"
+            thumb_local = temp_path(thumb_fname)
+            if _download_from_github(thumbnail_gh, thumb_local):
+                thumbnail_path = thumb_local
+        if not thumbnail_path:
+            default_thumb = os.path.join(BASE_DIR, "thumbnail", "thumbnail.jpg")
+            if os.path.exists(default_thumb):
+                thumbnail_path = default_thumb
+
         vid_id, err = do_youtube_upload(
             file_path,
             it.get("title", about.get("title", "")),
@@ -1003,8 +1169,14 @@ def queue_worker():
             it.get("tags", about.get("tags", [])),
             it.get("category", about.get("category", "20")),
             it.get("file_hash", ""), filename,
-            playlist_id=it.get("playlist_id", about.get("playlist", ""))
+            playlist_id=it.get("playlist_id") or about.get("playlist", ""),
+            thumbnail_path=thumbnail_path,
         )
+
+        # Hapus thumbnail temp jika di-download dari GitHub
+        if thumbnail_gh and thumbnail_path and os.path.exists(thumbnail_path):
+            try: os.remove(thumbnail_path)
+            except: pass
 
         # Video di GitHub dibiarkan tetap ada setelah upload YouTube berhasil
         if vid_id and github_path:
@@ -2038,6 +2210,7 @@ def api_v1_submit():
     title       = request.form.get('title', '')
     description = request.form.get('description', '')
     tags_raw    = request.form.get('tags', '')
+    playlist_id = request.form.get('playlist_id', '')
 
     try:
         timer_value = float(timer_value)
@@ -2058,6 +2231,27 @@ def api_v1_submit():
     fname     = f"{base}_{uid}{ext}"
     fpath     = temp_path(fname)
     f.save(fpath)
+
+    # === 4b. Simpan thumbnail jika ada ===
+    thumbnail_github_path = ""
+    if 'thumbnail' in request.files:
+        th_file = request.files['thumbnail']
+        if th_file and th_file.filename:
+            th_ext   = os.path.splitext(secure_filename(th_file.filename))[1] or ".jpg"
+            th_fname = f"thumb_{uid}{th_ext}"
+            th_fpath = temp_path(th_fname)
+            th_file.save(th_fpath)
+            # Upload thumbnail ke GitHub
+            th_repo_path = f"thumbnails/{th_fname}"
+            print(f"[API v1] Upload thumbnail ke GitHub: {th_repo_path}")
+            th_ok, _ = gh_upload_video(th_fpath, th_repo_path)
+            if th_ok:
+                thumbnail_github_path = th_repo_path
+                print(f"[API v1] Thumbnail tersimpan di GitHub: {th_repo_path}")
+            else:
+                print(f"[API v1] Gagal upload thumbnail ke GitHub, akan pakai default")
+            try: os.remove(th_fpath)
+            except: pass
 
     # === 5. Validasi file video ===
     valid, reason = is_valid_video(fpath)
@@ -2112,6 +2306,7 @@ def api_v1_submit():
     final_description = description or about.get('description', '')
     final_tags        = tags or about.get('tags', [])
     final_category    = category or about.get('category', '20')
+    final_playlist_id = playlist_id or about.get('playlist', '')
 
     # === 9. Masukkan ke antrian ===
     now_ts = time.time()
@@ -2129,25 +2324,26 @@ def api_v1_submit():
             upload_at    = datetime.fromtimestamp(upload_at_ts).strftime("%Y-%m-%d %H:%M:%S")
 
         item = {
-            "id":               str(uuid.uuid4()),
-            "filename":         fname,
-            "file_hash":        file_hash,
-            "github_path":      github_path,
-            "title":            final_title,
-            "description":      final_description,
-            "tags":             final_tags,
-            "category":         final_category,
-            "source":           "api_v1",
-            "added_at":         time.strftime("%Y-%m-%d %H:%M:%S"),
-            "added_at_ts":      now_ts,
-            "timeout_seconds":  timer_seconds,
-            "timeout_value":    timer_value,
-            "timeout_unit":     timer_unit,
-            "upload_at_ts":     upload_at_ts,
-            "upload_at":        upload_at,
-            "status":           status,
-            "remaining_seconds": timer_seconds if status == "pending" else None,
-            "playlist_id":      about.get("playlist", ""),
+            "id":                     str(uuid.uuid4()),
+            "filename":               fname,
+            "file_hash":              file_hash,
+            "github_path":            github_path,
+            "thumbnail_github_path":  thumbnail_github_path,
+            "title":                  final_title,
+            "description":            final_description,
+            "tags":                   final_tags,
+            "category":               final_category,
+            "playlist_id":            final_playlist_id,
+            "source":                 "api_v1",
+            "added_at":               time.strftime("%Y-%m-%d %H:%M:%S"),
+            "added_at_ts":            now_ts,
+            "timeout_seconds":        timer_seconds,
+            "timeout_value":          timer_value,
+            "timeout_unit":           timer_unit,
+            "upload_at_ts":           upload_at_ts,
+            "upload_at":              upload_at,
+            "status":                 status,
+            "remaining_seconds":      timer_seconds if status == "pending" else None,
         }
         queue.append(item)
         save_queue(queue, force_gh=True)
@@ -2194,6 +2390,8 @@ def api_v1_submit():
             "description": final_description,
             "tags":        final_tags,
             "category":    final_category,
+            "playlist_id": final_playlist_id,
+            "thumbnail":   f"github:{thumbnail_github_path}" if thumbnail_github_path else "default (thumbnail/thumbnail.jpg)",
         },
         "check_status_url": f"/api/v1/status/{item['id']}",
     }), 202
@@ -2309,14 +2507,16 @@ def api_v1_info():
             "info":       "GET  /api/v1/info",
         },
         "submit_fields": {
-            "video":       "file — file video [WAJIB]",
-            "timer_value": "int/float — angka timer [WAJIB]",
-            "timer_unit":  "str — hours | minutes | seconds [default: hours]",
-            "category":    "str — ID kategori YouTube [optional]",
-            "title":       "str — judul video [optional]",
-            "description": "str — deskripsi [optional]",
-            "tags":        "str — tags dipisah koma [optional]",
-            "api_key":     "str — API key [jika diperlukan]",
+            "video":        "file — file video [WAJIB]",
+            "timer_value":  "int/float — angka timer [WAJIB]",
+            "timer_unit":   "str — hours | minutes | seconds [default: hours]",
+            "category":     "str — ID kategori YouTube [optional]",
+            "title":        "str — judul video [optional]",
+            "description":  "str — deskripsi [optional]",
+            "tags":         "str — tags dipisah koma [optional]",
+            "playlist_id":  "str — ID playlist YouTube [optional]",
+            "thumbnail":    "file — gambar thumbnail JPG/PNG [optional, default: thumbnail/thumbnail.jpg]",
+            "api_key":      "str — API key [jika diperlukan]",
         },
         "timer_units": ["hours", "minutes", "seconds"],
         "categories":  YOUTUBE_CATEGORIES,
@@ -2636,13 +2836,64 @@ def community_post_poll():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/v1/cleanup', methods=['POST'])
+def api_v1_cleanup():
+    """
+    Trigger manual GitHub cleanup — hapus file video/thumbnail yang tidak ada di antrian aktif.
+    POST /api/v1/cleanup
+    Header: X-API-Key: <api_key>
+    """
+    if not _check_api_key():
+        return jsonify({"success": False, "error": "Unauthorized"}), 401
+
+    try:
+        queue = load_queue()
+
+        needed_paths = set()
+        for item in queue:
+            if item.get("status") in ("pending", "waiting"):
+                if item.get("github_path"):
+                    needed_paths.add(item["github_path"])
+                if item.get("thumbnail_github_path"):
+                    needed_paths.add(item["thumbnail_github_path"])
+
+        deleted = []
+        failed  = []
+
+        for folder in ("video", "thumbnails"):
+            files = _gh_list_folder_files(folder)
+            for vf in files:
+                repo_path = vf["path"]
+                if repo_path not in needed_paths:
+                    ok = _gh_delete_file(repo_path, vf["sha"],
+                                         f"[manual-cleanup] hapus file tidak aktif: {vf['name']}")
+                    if ok:
+                        deleted.append(repo_path)
+                    else:
+                        failed.append(repo_path)
+                    time.sleep(0.5)
+
+        return jsonify({
+            "success":       True,
+            "deleted":       deleted,
+            "failed":        failed,
+            "kept_paths":    list(needed_paths),
+            "deleted_count": len(deleted),
+            "failed_count":  len(failed),
+            "message":       f"Cleanup selesai. Dihapus: {len(deleted)}, Gagal: {len(failed)}, Dipertahankan: {len(needed_paths)}",
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 # ============================================================
 # STARTUP & MAIN
 # ============================================================
 
 # Auto-start workers (works with gunicorn too)
-threading.Thread(target=queue_worker, daemon=True).start()
-threading.Thread(target=sync_worker,  daemon=True).start()
+threading.Thread(target=queue_worker,          daemon=True).start()
+threading.Thread(target=sync_worker,           daemon=True).start()
+threading.Thread(target=github_cleanup_worker, daemon=True).start()
 
 if __name__ == '__main__':
     if not os.path.exists(ABOUT_FILE):
@@ -2669,8 +2920,6 @@ if __name__ == '__main__':
             try: os.remove(fpath)
             except: pass
 
-    threading.Thread(target=queue_worker, daemon=True).start()
-    threading.Thread(target=sync_worker,  daemon=True).start()
     port = int(os.environ.get('PORT', 5000))
     print(f'[SERVER] Starting on http://0.0.0.0:{port}')
     app.run(debug=False, host='0.0.0.0', port=port, threaded=True)
