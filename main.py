@@ -388,28 +388,14 @@ def sync_worker():
     while True:
         time.sleep(60)
         try:
-            # Cek antrian aktif: pastikan videonya masih ada di GitHub
-            if _ram_queue is not None:
-                changed = False
-                for item in _ram_queue:
-                    if item.get("status") in ("pending", "waiting") and item.get("github_path"):
-                        verified, _ = gh_verify_video(item["github_path"])
-                        if not verified:
-                            print(f"[SYNC] Video hilang dari GitHub → nonaktifkan: {item.get('title','?')}")
-                            item["status"] = "failed"
-                            item["error"] = "Video tidak ditemukan di GitHub"
-                            changed = True
-                if changed:
-                    with queue_lock:
-                        activate_next_waiting(_ram_queue)
-                        save_queue(_ram_queue, force_gh=True)
-
+            # Sinkron riwayat ke GitHub jika ada perubahan
             if _ram_riwayat is not None:
                 h = _md5(_ram_riwayat)
                 if h != _sync_riwayat_hash:
                     if gh_save("riwayat", _ram_riwayat, "[auto-sync] riwayat"):
                         _sync_riwayat_hash = h
 
+            # Sinkron queue ke GitHub jika ada perubahan
             if _ram_queue is not None:
                 h = _md5(_ram_queue)
                 if h != _sync_queue_hash:
@@ -468,9 +454,10 @@ def github_cleanup_worker():
     Setiap 1 jam:
     - Ambil antrian aktif (pending + waiting)
     - Kumpulkan semua github_path yang masih diperlukan
-    - List semua file di folder video/ di GitHub
-    - Hapus file yang tidak ada di antrian aktif
-    - Cek juga bahwa file antrian aktif benar-benar ada di GitHub
+    - List semua file di folder uploads/ di GitHub
+    - Hapus file yang tidak ada di antrian aktif DAN tidak ada di antrian done/uploading
+    - TIDAK menandai antrian sebagai failed hanya karena verify gagal
+      (verify bisa false positive karena rate limit / timing)
     """
     # Tunda 5 menit pertama supaya server sudah fully up
     time.sleep(300)
@@ -481,39 +468,50 @@ def github_cleanup_worker():
 
             queue = load_queue()
 
-            # Kumpulkan path yang MASIH diperlukan (pending & waiting)
+            # Kumpulkan SEMUA path yang masih diperlukan (semua status kecuali done/failed)
             needed_paths = set()
             for item in queue:
-                if item.get("status") in ("pending", "waiting"):
+                if item.get("status") not in ("done", "failed"):
                     gp = item.get("github_path", "")
                     if gp:
                         needed_paths.add(gp)
-                    # Juga jaga thumbnail jika ada
                     tp = item.get("thumbnail_github_path", "")
                     if tp:
                         needed_paths.add(tp)
 
-            print(f"[CLEANUP] File diperlukan di antrian: {len(needed_paths)}")
+            # Tambahkan juga path dari item done yang baru saja selesai (< 2 jam)
+            # agar file belum terlanjur dihapus sebelum YouTube konfirmasi
+            now_ts = time.time()
+            for item in queue:
+                if item.get("status") == "done":
+                    uploaded_at_str = item.get("uploaded_at", "")
+                    try:
+                        from datetime import datetime as _dt
+                        uploaded_ts = _dt.strptime(uploaded_at_str, "%Y-%m-%d %H:%M:%S").timestamp()
+                        if now_ts - uploaded_ts < 7200:  # baru selesai < 2 jam
+                            gp = item.get("github_path", "")
+                            if gp:
+                                needed_paths.add(gp)
+                    except Exception:
+                        pass
 
-            # ── 1. Verifikasi file antrian masih ada di GitHub ──
-            changed = False
+            print(f"[CLEANUP] Path yang masih diperlukan: {len(needed_paths)}")
+
+            # ── 1. TIDAK otomatis tandai antrian sebagai failed ──────────────
+            # Verifikasi file GitHub bisa gagal karena rate limit atau timing,
+            # bukan berarti file benar-benar hilang. Cukup log saja.
             for item in queue:
                 if item.get("status") in ("pending", "waiting") and item.get("github_path"):
                     verified, reason = gh_verify_video(item["github_path"])
                     if not verified:
-                        print(f"[CLEANUP] File hilang dari GitHub: {item['github_path']} → tandai failed")
-                        item["status"] = "failed"
-                        item["error"]  = f"[hourly check] File tidak ada di GitHub: {reason}"
-                        changed = True
+                        print(f"[CLEANUP] ⚠ Verify gagal (tidak dihapus dari antrian): "
+                              f"{item['github_path']} — {reason} | "
+                              f"title={item.get('title','?')}")
+                    else:
+                        print(f"[CLEANUP] ✓ File OK: {item['github_path']}")
 
-            if changed:
-                with queue_lock:
-                    activate_next_waiting(queue)
-                    save_queue(queue, force_gh=True)
-                print(f"[CLEANUP] Queue diupdate setelah cek file hilang")
-
-            # ── 2. Hapus file video GitHub yang tidak diperlukan ──
-            video_files = _gh_list_folder_files("video")
+            # ── 2. Hapus file uploads/ GitHub yang tidak diperlukan ──────────
+            video_files = _gh_list_folder_files("uploads")
             deleted_count = 0
             for vf in video_files:
                 repo_path = vf["path"]
@@ -526,7 +524,7 @@ def github_cleanup_worker():
                         print(f"[CLEANUP] ✓ Dihapus: {repo_path}")
                     time.sleep(1)  # Jaga rate limit GitHub API
 
-            # ── 3. Hapus thumbnail GitHub yang tidak diperlukan ──
+            # ── 3. Hapus thumbnail GitHub yang tidak diperlukan ──────────────
             thumb_files = _gh_list_folder_files("thumbnails")
             for tf in thumb_files:
                 repo_path = tf["path"]
@@ -538,7 +536,8 @@ def github_cleanup_worker():
                         deleted_count += 1
                     time.sleep(1)
 
-            print(f"[CLEANUP] Selesai. Total dihapus: {deleted_count} file | Diperlukan: {len(needed_paths)} file")
+            print(f"[CLEANUP] Selesai. Total dihapus: {deleted_count} file | "
+                  f"Diperlukan: {len(needed_paths)} path")
 
         except Exception as e:
             print(f"[CLEANUP] Error: {e}")
@@ -1178,9 +1177,21 @@ def queue_worker():
             try: os.remove(thumbnail_path)
             except: pass
 
-        # Video di GitHub dibiarkan tetap ada setelah upload YouTube berhasil
+        # Hapus video dari GitHub setelah upload YouTube berhasil
         if vid_id and github_path:
-            print(f"[QUEUE] Upload YouTube berhasil, video GitHub tetap disimpan: {github_path}")
+            print(f"[QUEUE] Upload YouTube berhasil, hapus video dari GitHub: {github_path}")
+            ok_del = gh_delete_video(github_path)
+            if ok_del:
+                print(f"[QUEUE] ✓ Video GitHub dihapus: {github_path}")
+            else:
+                print(f"[QUEUE] ⚠ Gagal hapus video GitHub (akan dibersihkan cleanup worker): {github_path}")
+            # Hapus juga thumbnail dari GitHub jika ada
+            if thumbnail_gh:
+                ok_th_del = gh_delete_video(thumbnail_gh)
+                if ok_th_del:
+                    print(f"[QUEUE] ✓ Thumbnail GitHub dihapus: {thumbnail_gh}")
+                else:
+                    print(f"[QUEUE] ⚠ Gagal hapus thumbnail GitHub: {thumbnail_gh}")
 
         cleanup_temp(filename)
 
@@ -1695,13 +1706,28 @@ def delete_all():
     deleted = []
     errors  = []
 
-    # 2. Hapus semua file di folder video/
+    # 2. Hapus semua file di folder uploads/ (video dari app.py)
+    for path, sha in _list_folder("uploads"):
+        ok = _delete_gh_file(path, sha)
+        (deleted if ok else errors).append(path)
+        _sha_cache.pop(path, None)
+        time.sleep(0.5)  # rate limit
+
+    # 3. Hapus semua file di folder thumbnails/
+    for path, sha in _list_folder("thumbnails"):
+        ok = _delete_gh_file(path, sha)
+        (deleted if ok else errors).append(path)
+        _sha_cache.pop(path, None)
+        time.sleep(0.5)
+
+    # 4. Hapus semua file di folder video/ (legacy, untuk backward compat)
     for path, sha in _list_folder("video"):
         ok = _delete_gh_file(path, sha)
         (deleted if ok else errors).append(path)
         _sha_cache.pop(path, None)
+        time.sleep(0.5)
 
-    # 3. Hapus semua file di folder data/ KECUALI settings.json
+    # 5. Hapus semua file di folder data/ KECUALI settings.json
     for path, sha in _list_folder("data"):
         if os.path.basename(path) == "settings.json":
             continue
